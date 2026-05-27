@@ -139,6 +139,7 @@ def main():
         os.environ["PROXY_HOST"] = host
         os.environ["PROXY_PORT"] = str(port)
         os.environ["PROXY_LOG_LEVEL"] = log_level
+        os.environ["PROXY_GUI_MODE"] = "1"
 
     # ── 启动 / 停止 ──
 

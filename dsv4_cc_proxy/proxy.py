@@ -72,7 +72,8 @@ def _setup_logging():
         _root.addHandler(_fh)
 
 
-_setup_logging()
+if not os.environ.get("PROXY_GUI_MODE"):
+    _setup_logging()
 
 _shared_client: httpx.AsyncClient | None = None
 
