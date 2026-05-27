@@ -17,11 +17,15 @@ from datetime import datetime
 from pathlib import Path
 
 # ── 版本（独立定义，不 import proxy 模块） ─────────────────
-_VERSION_PATH = Path(__file__).resolve().parent / "_version.py"
-_VERSION = {}
-if _VERSION_PATH.exists():
-    exec(_VERSION_PATH.read_text(encoding="utf-8"), _VERSION)
-VERSION = _VERSION.get("VERSION", "?.?.?")
+try:
+    from dsv4_cc_proxy._version import VERSION as _ver
+    VERSION = _ver
+except ImportError:
+    _VERSION_PATH = Path(__file__).resolve().parent / "_version.py"
+    _VERSION = {}
+    if _VERSION_PATH.exists():
+        exec(_VERSION_PATH.read_text(encoding="utf-8"), _VERSION)
+    VERSION = _VERSION.get("VERSION", "?.?.?")
 
 # ── 默认配置 ─────────────────────────────────────────────
 _DEFAULT_UPSTREAM = "https://api.deepseek.com/anthropic"
