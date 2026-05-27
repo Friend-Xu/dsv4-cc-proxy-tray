@@ -147,6 +147,16 @@ def main():
 
     # ── 启动 / 停止 ──
 
+    def _setup_logging(log_level: str):
+        handler = _QueueHandler(log_queue)
+        lvl = getattr(logging, log_level.upper(), logging.WARNING)
+        # 只给根 logger 挂 QueueHandler，uvicorn 子 logger（uvicorn.error）
+        # 默认 propagate=True，会自动传播到根 logger。
+        # 不要手动给 uvicorn.* logger 挂 handler，避免与 uvicorn 默认 logging config 冲突。
+        root_logger = logging.getLogger()
+        root_logger.handlers = [handler]
+        root_logger.setLevel(lvl)
+
     def start():
         nonlocal _server, _server_thread
 
@@ -154,7 +164,6 @@ def main():
             messagebox.showinfo("提示", "代理已在运行中")
             return
 
-        # 设置环境变量（必须在 import proxy 之前）
         upstream = upstream_var.get()
         listen_addr = listen_var.get()
         log_level = log_level_var.get()
@@ -167,37 +176,27 @@ def main():
             "log_level": log_level,
         })
 
-        # 设置日志捕获
-        root_logger = logging.getLogger()
-        root_logger.handlers = [_QueueHandler(log_queue)]
-        root_logger.setLevel(getattr(logging, log_level.upper(), logging.WARNING))
-
+        _setup_logging(log_level)
         _append_text(f"启动代理 v{VERSION}\n", "INFO")
 
-        _server_stop.clear()
+        # 在主线程 import，确保环境变量已设置
+        import uvicorn
+        from dsv4_cc_proxy.proxy import create_app
+
+        config = uvicorn.Config(
+            app=create_app(),
+            host=host,
+            port=port,
+            log_level=log_level,
+        )
+        _server = uvicorn.Server(config)
 
         def _run_server():
-            nonlocal _server
-            # 延迟 import，确保环境变量已设置
-            import uvicorn
-            from dsv4_cc_proxy.proxy import HOST, LOG_LEVEL, PORT, create_app
-
-            config = uvicorn.Config(
-                app=create_app(),
-                host=HOST,
-                port=PORT,
-                log_level=LOG_LEVEL,
-                log_config=None,  # 关闭 uvicorn 自带日志，用我们的 handler
-            )
-            _server = uvicorn.Server(config)
-            _server_stop.set()  # 清除上一次的状态，作为 running 标记
+            nonlocal _server, _server_thread
             try:
                 _server.run()
             except Exception:
                 logging.getLogger().exception("uvicorn error")
-
-            # server 退出后更新 UI
-            nonlocal _server_thread
             _server = None
             _server_thread = None
             _update_status()
