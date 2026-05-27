@@ -1,12 +1,12 @@
 # dsv4-cc-proxy / GUI — tkinter 图形界面启动器
 #
-# 通过子进程 ``python -m dsv4_cc_proxy`` 启动代理，stdout 读取日志。
-# 打包成 exe 时整个 dsv4_cc_proxy/ 通过 --add-data 打入，
-# PyInstaller 自动解压到 sys._MEIPASS，sys.executable 即为内嵌 Python。
+# 在后台 daemon 线程中内嵌运行 uvicorn，不启动子进程。
+# 避免 PyInstaller exe 中子进程重新触发 GUI 的循环启动问题。
 
 from __future__ import annotations
 
 import json
+import logging
 import os
 import queue
 import re
@@ -31,7 +31,6 @@ _DEFAULT_LOG_LEVEL = "warning"
 # ── 持久化配置路径 ──────────────────────────────────────────
 _CONFIG_PATH = Path.home() / ".dsv4-cc-proxy-gui.json"
 _GUI_LOCKFILE = Path.home() / ".dsv4-cc-proxy-gui.lock"
-_PROXY_PIDFILE = Path.home() / "dsv4-cc-proxy.pid"
 
 
 def _load_config() -> dict:
@@ -60,8 +59,8 @@ _COLOR_TAGS = {
 
 _LOG_LINE_RE = re.compile(r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3})\s+(\w+)\s+(.*)$")
 
-# ── 跨平台进程检查 ──────────────────────────────────────────
 
+# ── 跨平台进程检查 ──────────────────────────────────────────
 
 def _is_process_running(pid: int) -> bool:
     if sys.platform == "win32":
@@ -80,6 +79,20 @@ def _is_process_running(pid: int) -> bool:
         except OSError:
             return False
 
+
+# ── 日志捕获 Handler ──────────────────────────────────────
+
+class _QueueHandler(logging.Handler):
+    """将 logging 记录转发到 tkinter 日志队列。"""
+    def __init__(self, q: queue.Queue):
+        super().__init__()
+        self.q = q
+        self.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+
+    def emit(self, record: logging.LogRecord):
+        self.q.put(self.format(record))
+
+
 # ── GUI ──────────────────────────────────────────────────────
 
 
@@ -92,7 +105,6 @@ def main():
         try:
             old_pid = int(_GUI_LOCKFILE.read_text().strip())
             if _is_process_running(old_pid):
-                # tkinter 还未初始化，用 ctypes MessageBox 弹窗
                 import ctypes
                 ctypes.windll.user32.MessageBoxW(0,
                     "dsv4-cc-proxy GUI 已在运行中，请查看系统托盘或任务栏。",
@@ -108,9 +120,10 @@ def main():
     saved = _load_config()
 
     # ── 状态 ──
-    proc: subprocess.Popen | None = None
+    _server_stop = threading.Event()
+    _server = None               # uvicorn.Server
+    _server_thread = None        # threading.Thread
     log_queue: queue.Queue = queue.Queue()
-    exit_event = threading.Event()
 
     def _parse_host_port(s: str) -> tuple[str, int]:
         s = s.strip()
@@ -119,32 +132,29 @@ def main():
             return host, int(port_str)
         return s, 16889
 
+    # ── 环境变量（在启动线程前设置） ──
+
+    def _set_env(upstream: str, host: str, port: int, log_level: str):
+        os.environ["PROXY_UPSTREAM"] = upstream
+        os.environ["PROXY_HOST"] = host
+        os.environ["PROXY_PORT"] = str(port)
+        os.environ["PROXY_LOG_LEVEL"] = log_level
+
     # ── 启动 / 停止 ──
 
     def start():
-        nonlocal proc
+        nonlocal _server, _server_thread
 
-        if proc is not None and proc.poll() is None:
+        if _server is not None or (_server_thread is not None and _server_thread.is_alive()):
             messagebox.showinfo("提示", "代理已在运行中")
             return
 
-        # 检查 PID 文件，防止重复启动代理（可能由其他 GUI 实例启动）
-        if _PROXY_PIDFILE.exists():
-            try:
-                pid = int(_PROXY_PIDFILE.read_text().strip())
-                if _is_process_running(pid):
-                    messagebox.showinfo("提示", f"代理已在运行中 (PID {pid})")
-                    _update_status()
-                    return
-                else:
-                    _PROXY_PIDFILE.unlink(missing_ok=True)
-            except (ValueError, OSError):
-                _PROXY_PIDFILE.unlink(missing_ok=True)
-
+        # 设置环境变量（必须在 import proxy 之前）
         upstream = upstream_var.get()
         listen_addr = listen_var.get()
         log_level = log_level_var.get()
         host, port = _parse_host_port(listen_addr)
+        _set_env(upstream, host, port, log_level)
 
         _save_config({
             "upstream": upstream,
@@ -152,95 +162,58 @@ def main():
             "log_level": log_level,
         })
 
-        env = {
-            **os.environ,
-            "PROXY_UPSTREAM": upstream,
-            "PROXY_HOST": host,
-            "PROXY_PORT": str(port),
-            "PROXY_LOG_LEVEL": log_level,
-            "PYTHONIOENCODING": "utf-8",
-        }
+        # 设置日志捕获
+        root_logger = logging.getLogger()
+        root_logger.handlers = [_QueueHandler(log_queue)]
+        root_logger.setLevel(getattr(logging, log_level.upper(), logging.WARNING))
 
         _append_text(f"启动代理 v{VERSION}\n", "INFO")
 
-        try:
-            proc = subprocess.Popen(
-                [sys.executable, "-m", "dsv4_cc_proxy"],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                env=env,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                bufsize=1,
-                creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
-            )
-        except Exception as e:
-            _append_text(f"启动失败: {e}\n", "ERROR")
-            return
+        _server_stop.clear()
 
-        exit_event.clear()
-        threading.Thread(target=_read_stdout, daemon=True).start()
-        threading.Thread(target=_monitor_exit, daemon=True).start()
+        def _run_server():
+            nonlocal _server
+            # 延迟 import，确保环境变量已设置
+            import uvicorn
+            from dsv4_cc_proxy.proxy import HOST, LOG_LEVEL, PORT, create_app
+
+            config = uvicorn.Config(
+                app=create_app(),
+                host=HOST,
+                port=PORT,
+                log_level=LOG_LEVEL,
+                log_config=None,  # 关闭 uvicorn 自带日志，用我们的 handler
+            )
+            _server = uvicorn.Server(config)
+            _server_stop.set()  # 清除上一次的状态，作为 running 标记
+            try:
+                _server.run()
+            except Exception:
+                logging.getLogger().exception("uvicorn error")
+
+            # server 退出后更新 UI
+            nonlocal _server_thread
+            _server = None
+            _server_thread = None
+            _update_status()
+            _append_text("代理已停止\n", "INFO")
+
+        _server_thread = threading.Thread(target=_run_server, daemon=True)
+        _server_thread.start()
         _update_status()
 
     def stop():
-        nonlocal proc
-        if proc is None:
+        nonlocal _server
+        if _server is None:
             messagebox.showinfo("提示", "代理未在运行")
             return
-        exit_event.set()
-        try:
-            proc.terminate()
-        except OSError:
-            pass
-        threading.Thread(target=_wait_stop, daemon=True).start()
-
-    def _wait_stop():
-        nonlocal proc
-        if proc is None:
-            return
-        try:
-            proc.wait(timeout=6)
-        except subprocess.TimeoutExpired:
-            try:
-                proc.kill()
-            except OSError:
-                pass
-            try:
-                proc.wait(timeout=2)
-            except subprocess.TimeoutExpired:
-                pass
-        proc = None
-        _update_status()
-        _append_text("代理已停止\n", "INFO")
-
-    def _read_stdout():
-        if proc is None or proc.stdout is None:
-            return
-        try:
-            for line in iter(proc.stdout.readline, ""):
-                if exit_event.is_set():
-                    break
-                if line:
-                    log_queue.put(line.rstrip("\n"))
-        except (ValueError, OSError):
-            pass
-
-    def _monitor_exit():
-        if proc is None:
-            return
-        try:
-            proc.wait()
-        except OSError:
-            pass
-        if not exit_event.is_set():
-            log_queue.put("代理进程异常退出")
+        _append_text("正在停止代理...\n", "INFO")
+        _server.should_exit = True
         _update_status()
 
     def _update_status():
         def _do():
-            running = proc is not None and proc.poll() is None
+            running = _server is not None
             status_label.config(text="● 运行中" if running else "○ 已停止",
                                foreground="green" if running else "gray")
             start_btn.config(state="disabled" if running else "normal")
@@ -275,7 +248,6 @@ def main():
 
         log_text.config(state="normal")
         log_text.insert("end", "".join(lines), ("ts",))
-        # 回退为每行上色：在 insert 后对每行逐个打 tag（比逐行 insert 快很多）
         pos = log_text.index("end-1c linestart")
         for ts, msg, color in _log_buffer:
             if color != "black":
@@ -286,7 +258,6 @@ def main():
 
         _log_buffer.clear()
 
-        # 行数限制：超过 MAX_LINES 时裁掉最老的
         total = int(log_text.index("end-1c").split(".")[0])
         if total > _MAX_LINES:
             cutoff = total - _TRIM_TO
@@ -410,10 +381,11 @@ def main():
     # ── 窗口关闭 ──
 
     def on_close():
-        if proc is not None and proc.poll() is None:
+        running = _server is not None
+        if running:
             if messagebox.askokcancel("退出", "代理正在运行，确定退出并停止代理？"):
                 stop()
-                root.after(500, root.destroy)
+                root.after(300, root.destroy)
         else:
             root.destroy()
 
