@@ -1,15 +1,17 @@
 # dsv4-cc-proxy CLI 入口 (Windows 兼容修复版)
 import argparse
-import os
-import sys
-import time
 import atexit
-import tempfile
-import subprocess
+import os
 import signal
+import subprocess
+import sys
+import tempfile
+import time
+
 import uvicorn
+
 from dsv4_cc_proxy._version import VERSION
-from dsv4_cc_proxy.proxy import HOST, PORT, LOG_LEVEL, DUMP_DIR
+from dsv4_cc_proxy.proxy import DUMP_DIR, HOST, LOG_LEVEL, PORT
 
 # 使用系统临时目录，自动适配 Windows / Linux / macOS
 PIDFILE_DEFAULT = os.path.join(tempfile.gettempdir(), "dsv4-cc-proxy.pid")

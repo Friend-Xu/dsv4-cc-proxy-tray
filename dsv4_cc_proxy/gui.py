@@ -110,7 +110,7 @@ def main():
     sys.excepthook = _excepthook
 
     import tkinter as tk
-    from tkinter import ttk, messagebox
+    from tkinter import messagebox, ttk
 
     # ── 单实例保护 ──
     if _GUI_LOCKFILE.exists():
@@ -193,6 +193,7 @@ def main():
         # 在主线程 import，确保环境变量已设置
         try:
             import uvicorn
+
             from dsv4_cc_proxy.proxy import create_app
 
             # log_config=None 阻止 uvicorn 用 dictConfig 覆盖 root logger
