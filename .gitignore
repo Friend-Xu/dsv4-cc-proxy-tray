@@ -11,3 +11,4 @@ build/
 .claude/
 __启动脚本.bat
 *.spec
+CLAUDE.md
