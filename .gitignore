@@ -1,0 +1,13 @@
+.DS_Store
+.venv/
+__pycache__/
+*.pyc
+*.log
+.env
+dist/
+*.egg-info/
+build/
+.pytest_cache/
+.claude/
+__启动脚本.bat
+*.spec

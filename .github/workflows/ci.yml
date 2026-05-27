@@ -1,0 +1,170 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+      fail-fast: false
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ matrix.python-version }}
+
+    - name: Install dependencies
+      run: |
+        pip install --upgrade pip
+        pip install ".[test]"
+
+    - name: Run tests
+      run: python -m pytest tests/test_proxy.py -v
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+    - name: Install linting tools
+      run: pip install ruff
+    - name: Lint with ruff
+      run: ruff check dsv4_cc_proxy/ tests/
+
+  pages:
+    runs-on: ubuntu-latest
+    needs: [test, lint]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+    - uses: actions/checkout@v4
+    - name: Setup Pages
+      uses: actions/configure-pages@v5
+    - name: Upload artifact
+      uses: actions/upload-pages-artifact@v3
+      with:
+        path: "."
+    - name: Deploy to GitHub Pages
+      id: deployment
+      uses: actions/deploy-pages@v4
+
+  publish:
+    runs-on: ubuntu-latest
+    needs: [test, lint]
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+
+    - name: Install build tools
+      run: pip install build
+
+    - name: Extract version from tag
+      id: tag
+      run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+    # --- GitHub Release ---
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v2
+      with:
+        generate_release_notes: true
+        name: v${{ steps.tag.outputs.VERSION }}
+
+    # --- PyPI publish (API token) ---
+    - name: Build sdist & wheel
+      run: python -m build
+
+    - name: Publish to PyPI
+      uses: pypa/gh-action-pypi-publish@release/v1
+      with:
+        password: ${{ secrets.PYPI_API_TOKEN }}
+        print-hash: true
+
+    # --- Docker publish ---
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Log in to Docker Hub
+      uses: docker/login-action@v3
+      with:
+        username: ${{ secrets.DOCKER_USERNAME }}
+        password: ${{ secrets.DOCKER_PASSWORD }}
+
+    - name: Extract metadata for Docker
+      id: meta
+      uses: docker/metadata-action@v5
+      with:
+        images: hosheali/dsv4-cc-proxy
+        tags: |
+          type=semver,pattern={{version}}
+          type=semver,pattern={{major}}.{{minor}}
+          type=raw,value=latest
+
+    - name: Build and push Docker image
+      uses: docker/build-push-action@v6
+      with:
+        context: .
+        push: true
+        tags: ${{ steps.meta.outputs.tags }}
+
+    # --- Post-publish verification ---
+    - name: Verify pip install
+      run: |
+        pip install dsv4-cc-proxy==${{ steps.tag.outputs.VERSION }}
+        python3 -c "from dsv4_cc_proxy import VERSION; print(VERSION)"
+
+    - name: Verify docker image
+      run: |
+        docker run -d -p 16889:16889 --name verify-proxy hosheali/dsv4-cc-proxy:latest
+        sleep 3
+        curl -f http://localhost:16889/health
+        docker stop verify-proxy
+
+    # --- Homebrew tap update ---
+    - name: Update Homebrew tap
+      run: |
+        VERSION="${{ steps.tag.outputs.VERSION }}"
+        TAP_REPO="HosheaLi/homebrew-tap"
+        FORMULA_PATH="Formula/dsv4-cc-proxy.rb"
+
+        git clone "https://x-access-token:${GITHUB_TOKEN}@github.com/${TAP_REPO}.git" tap
+        cd tap
+
+        # 从 PyPI 获取 sdist SHA256
+        SDIST_URL="https://files.pythonhosted.org/packages/source/d/dsv4-cc-proxy/dsv4_cc_proxy-${VERSION}.tar.gz"
+        SHA256=$(curl -sL "$SDIST_URL" | sha256sum | cut -d' ' -f1)
+
+        sed -i "s/version \".*\"/version \"${VERSION}\"/" "$FORMULA_PATH"
+        sed -i "s|url \".*\"|url \"${SDIST_URL}\"|" "$FORMULA_PATH"
+        sed -i "s/sha256 \".*\"/sha256 \"${SHA256}\"/" "$FORMULA_PATH"
+
+        git config user.name "github-actions[bot]"
+        git config user.email "github-actions[bot]@users.noreply.github.com"
+        git add "$FORMULA_PATH"
+        git commit -m "dsv4-cc-proxy: update to v${VERSION}"
+        git push
