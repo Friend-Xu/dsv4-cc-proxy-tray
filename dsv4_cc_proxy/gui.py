@@ -30,6 +30,8 @@ _DEFAULT_LOG_LEVEL = "warning"
 
 # ── 持久化配置路径 ──────────────────────────────────────────
 _CONFIG_PATH = Path.home() / ".dsv4-cc-proxy-gui.json"
+_GUI_LOCKFILE = Path.home() / ".dsv4-cc-proxy-gui.lock"
+_PROXY_PIDFILE = Path.home() / "dsv4-cc-proxy.pid"
 
 
 def _load_config() -> dict:
@@ -58,12 +60,50 @@ _COLOR_TAGS = {
 
 _LOG_LINE_RE = re.compile(r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3})\s+(\w+)\s+(.*)$")
 
+# ── 跨平台进程检查 ──────────────────────────────────────────
+
+
+def _is_process_running(pid: int) -> bool:
+    if sys.platform == "win32":
+        try:
+            output = subprocess.check_output(
+                f'tasklist /FI "PID eq {pid}" /FO CSV',
+                shell=True, stderr=subprocess.DEVNULL,
+            ).decode("gbk", errors="ignore")
+            return f'"{pid}"' in output
+        except Exception:
+            return False
+    else:
+        try:
+            os.kill(pid, 0)
+            return True
+        except OSError:
+            return False
+
 # ── GUI ──────────────────────────────────────────────────────
 
 
 def main():
     import tkinter as tk
     from tkinter import ttk, messagebox
+
+    # ── 单实例保护 ──
+    if _GUI_LOCKFILE.exists():
+        try:
+            old_pid = int(_GUI_LOCKFILE.read_text().strip())
+            if _is_process_running(old_pid):
+                # tkinter 还未初始化，用 ctypes MessageBox 弹窗
+                import ctypes
+                ctypes.windll.user32.MessageBoxW(0,
+                    "dsv4-cc-proxy GUI 已在运行中，请查看系统托盘或任务栏。",
+                    "提示", 0x40)
+                sys.exit(0)
+            else:
+                _GUI_LOCKFILE.unlink(missing_ok=True)
+        except (ValueError, OSError):
+            _GUI_LOCKFILE.unlink(missing_ok=True)
+
+    _GUI_LOCKFILE.write_text(str(os.getpid()))
 
     saved = _load_config()
 
@@ -87,6 +127,19 @@ def main():
         if proc is not None and proc.poll() is None:
             messagebox.showinfo("提示", "代理已在运行中")
             return
+
+        # 检查 PID 文件，防止重复启动代理（可能由其他 GUI 实例启动）
+        if _PROXY_PIDFILE.exists():
+            try:
+                pid = int(_PROXY_PIDFILE.read_text().strip())
+                if _is_process_running(pid):
+                    messagebox.showinfo("提示", f"代理已在运行中 (PID {pid})")
+                    _update_status()
+                    return
+                else:
+                    _PROXY_PIDFILE.unlink(missing_ok=True)
+            except (ValueError, OSError):
+                _PROXY_PIDFILE.unlink(missing_ok=True)
 
         upstream = upstream_var.get()
         listen_addr = listen_var.get()
@@ -360,14 +413,20 @@ def main():
         if proc is not None and proc.poll() is None:
             if messagebox.askokcancel("退出", "代理正在运行，确定退出并停止代理？"):
                 stop()
-                root.after(500, root.destroy)  # 等子进程清理完
+                root.after(500, root.destroy)
         else:
             root.destroy()
+
+    def _cleanup_lock():
+        _GUI_LOCKFILE.unlink(missing_ok=True)
 
     root.protocol("WM_DELETE_WINDOW", on_close)
 
     _poll_log()
-    root.mainloop()
+    try:
+        root.mainloop()
+    finally:
+        _cleanup_lock()
 
 
 if __name__ == "__main__":
