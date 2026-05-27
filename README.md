@@ -4,9 +4,9 @@
 
 # dsv4-cc-proxy
 
-**Make DeepSeek V4 work flawlessly with Claude Code**
+**Make DeepSeek V4 work flawlessly with Claude Code on Windows**
 
-Anthropic API compatibility proxy that fixes 3 DeepSeek V4 incompatibilities.
+Anthropic API compatibility proxy with a native Windows GUI — one-click launch, no terminal needed.
 
 > **源仓库:** [github.com/HosheaLi/dsv4-cc-proxy](https://github.com/HosheaLi/dsv4-cc-proxy)
 
@@ -16,9 +16,7 @@ Claude Code ←→ localhost:16889 (dsv4-cc-proxy) ←→ api.deepseek.com/anthr
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue)](https://www.python.org)
-[![CI](https://github.com/Friend-Xu/dsv4-cc-proxy/actions/workflows/ci.yml/badge.svg)](https://github.com/Friend-Xu/dsv4-cc-proxy/actions)
-[![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey)]()
-[![Docker Pulls](https://img.shields.io/docker/pulls/hosheali/dsv4-cc-proxy)](https://hub.docker.com/r/hosheali/dsv4-cc-proxy)
+[![Platform](https://img.shields.io/badge/platform-Windows-blue)]()
 
 </div>
 
@@ -38,47 +36,19 @@ Non-DeepSeek requests and non-`/messages` endpoints pass through with zero overh
 
 ## Quick Start
 
-### Option 1: pip install (recommended)
+### Option 1: Download exe (recommended for Windows)
+
+Download `dsv4-cc-proxy-gui.exe` from [Releases](https://github.com/Friend-Xu/dsv4-cc-proxy/releases), double-click to run.
+
+- **No Python required** — self-contained, all dependencies bundled
+- **No black console window** — clean GUI only
+- **No pip install** — just download and run
+
+### Option 2: Run from source
 
 ```bash
-pip install dsv4-cc-proxy
-
-# Start the proxy (default port 16889)
-dsv4-cc-proxy
-
-# Stop the proxy
-dsv4-cc-proxy --stop
-```
-
-### Option 2: Homebrew (macOS)
-
-```bash
-brew install hosheali/tap/dsv4-cc-proxy
-
-# Start the proxy
-dsv4-cc-proxy
-
-# Register as a background service (auto-start on login)
-brew services start hosheali/tap/dsv4-cc-proxy
-```
-
-### Option 3: pipx (isolated environment)
-
-```bash
-pipx install dsv4-cc-proxy
-dsv4-cc-proxy
-```
-
-### Option 4: Docker
-
-```bash
-docker run -d -p 16889:16889 --name dsv4-cc-proxy hosheali/dsv4-cc-proxy:latest
-```
-
-Or via docker compose:
-
-```bash
-docker compose up -d
+pip install -e .
+python dsv4_cc_proxy/gui.py
 ```
 
 ### Configure Claude Code
@@ -88,6 +58,14 @@ Point Claude Code to the proxy by adding to your `settings.local.json`:
 ```json
 "ANTHROPIC_BASE_URL": "http://localhost:16889"
 ```
+
+## GUI Features
+
+- **Start / Stop** proxy with one click
+- **Real-time colored log** display with auto-scroll
+- **Config panel** — upstream URL, listen address, log level
+- **Persistent settings** saved to `~/.dsv4-cc-proxy-gui.json`
+- **Cross-platform process management** — works on Windows without POSIX signals
 
 ## Configuration
 
@@ -109,63 +87,6 @@ Point Claude Code to the proxy by adding to your `settings.local.json`:
 | Non-messages endpoints | — | Zero-overhead passthrough |
 | Non-DeepSeek models | — | Zero-overhead passthrough |
 
-## Platform Guides
-
-### macOS (launchd auto-start)
-
-```bash
-# Copy and edit paths in the plist file first!
-cp scripts/com.deepseek.thinking-proxy.plist ~/Library/LaunchAgents/
-launchctl load ~/Library/LaunchAgents/com.deepseek.thinking-proxy.plist
-```
-
-**Note:** Edit the plist file to update paths like `/Users/yourname/.claude/proxy/` to match your setup.
-
-### Windows (Scheduled Task)
-
-```batch
-:: One-time setup (auto-start at logon, restart on crash)
-scripts\install_windows_service.ps1 -Install
-
-:: Start manually in terminal
-scripts\start.bat
-
-:: Or with PowerShell
-scripts\start.ps1
-```
-
-### Linux (systemd)
-
-Create `/etc/systemd/system/dsv4-cc-proxy.service`:
-
-```ini
-[Unit]
-Description=dsv4-cc-proxy — DeepSeek Anthropic API proxy
-After=network.target
-
-[Service]
-Type=simple
-User=your-user
-ExecStart=/usr/local/bin/dsv4-cc-proxy
-Restart=on-failure
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-```
-
-```bash
-sudo systemctl daemon-reload
-sudo systemctl enable --now dsv4-cc-proxy
-```
-
-## Docker (manual build)
-
-```bash
-docker build -t dsv4-cc-proxy .
-docker run -d -p 16889:16889 --name dsv4-cc-proxy dsv4-cc-proxy
-```
-
 ## How It Works
 
 ```
@@ -185,50 +106,47 @@ docker run -d -p 16889:16889 --name dsv4-cc-proxy dsv4-cc-proxy
                    └────────────────┘
 ```
 
-The proxy intercepts `POST /v1/messages` and applies three fixes for `deepseek-v4*` models. All other requests pass through transparently.
-
-## Testing
-
-```bash
-pip install dsv4-cc-proxy[test]
-pytest tests/ -v
-```
-
-### Health Check
-
-```bash
-curl http://localhost:16889/health
-# → {"status":"ok","version":"1.8.0","upstream":"https://api.deepseek.com/anthropic"}
-```
-
 ## Project Structure
 
 ```
 .
 ├── dsv4_cc_proxy/
-│   ├── __init__.py                  # Package entry, exports VERSION + create_app
-│   ├── __main__.py                  # CLI entry — dsv4-cc-proxy command
-│   ├── _version.py                  # VERSION = "1.8.0" (single source of truth)
-│   └── proxy.py                     # Core proxy logic (factory pattern)
+│   ├── __init__.py            # Package entry
+│   ├── __main__.py            # CLI entry
+│   ├── _version.py            # VERSION = "1.8.0"
+│   ├── proxy.py               # Core proxy logic
+│   └── gui.py                 # Windows GUI launcher
 ├── tests/
-│   └── test_proxy.py                # 22 unit tests
+│   └── test_proxy.py          # 25 unit tests
 ├── scripts/
-│   ├── start.bat                    # Windows batch startup
-│   ├── start.ps1                    # PowerShell startup
-│   ├── install_windows_service.ps1  # Windows Task Scheduler setup
-│   └── com.deepseek.thinking-proxy.plist  # macOS launchd (optional)
-├── Dockerfile                       # Docker multi-stage build
-├── docker-compose.yml               # Docker Compose
-├── pyproject.toml                   # Build config, entry point
-├── MANIFEST.in                      # Package extras
-├── .github/workflows/ci.yml         # GitHub Actions CI
-├── LICENSE                          # MIT License
-└── CONTRIBUTING.md                  # Contributor guidelines
+│   ├── build_exe.bat          # PyInstaller packaging
+│   ├── start_gui.bat          # Dev launch script
+│   ├── start.bat              # CLI startup
+│   └── start.ps1              # PowerShell startup
+├── pyproject.toml
+├── .github/workflows/ci.yml
+└── LICENSE
 ```
 
-## Contributing
+## Building from Source
 
-Contributions are welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+```bash
+# Install dev dependencies
+pip install -e ".[test]"
+
+# Run tests
+pytest tests/ -v
+
+# Build exe
+scripts\build_exe.bat
+```
+
+## Health Check
+
+```bash
+curl http://localhost:16889/health
+# → {"status":"ok","version":"1.8.0","upstream":"https://api.deepseek.com/anthropic"}
+```
 
 ## License
 
