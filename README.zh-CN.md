@@ -6,6 +6,8 @@
 
 Anthropic API 兼容性代理，修复 DeepSeek V4 的 3 个不兼容问题。
 
+> **源仓库:** [github.com/HosheaLi/P14_dsv4ToCC](https://github.com/HosheaLi/P14_dsv4ToCC)
+
 ```
 Claude Code ←→ localhost:16889 (dsv4-cc-proxy) ←→ api.deepseek.com/anthropic
 ```

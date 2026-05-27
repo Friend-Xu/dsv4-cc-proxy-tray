@@ -8,6 +8,8 @@
 
 Anthropic API compatibility proxy that fixes 3 DeepSeek V4 incompatibilities.
 
+> **源仓库:** [github.com/HosheaLi/P14_dsv4ToCC](https://github.com/HosheaLi/P14_dsv4ToCC)
+
 ```
 Claude Code ←→ localhost:16889 (dsv4-cc-proxy) ←→ api.deepseek.com/anthropic
 ```
