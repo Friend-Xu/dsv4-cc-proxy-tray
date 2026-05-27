@@ -18,6 +18,8 @@ Claude Code ←→ localhost:16889 (dsv4-cc-proxy) ←→ api.deepseek.com/anthr
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue)](https://www.python.org)
 [![Platform](https://img.shields.io/badge/platform-Windows-blue)]()
 
+![screenshot](screenshot.png)
+
 </div>
 
 ---
