@@ -10,5 +10,5 @@ build/
 .pytest_cache/
 .claude/
 __启动脚本.bat
-*.spec
+dsv4-cc-proxy-tray.spec
 CLAUDE.md

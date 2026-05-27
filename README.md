@@ -2,7 +2,7 @@
 
 [**中文版 README**](README.zh-CN.md)
 
-# dsv4-cc-proxy
+# dsv4-cc-proxy-tray
 
 **Make DeepSeek V4 work flawlessly with Claude Code on Windows**
 
@@ -38,7 +38,7 @@ Non-DeepSeek requests and non-`/messages` endpoints pass through with zero overh
 
 ### Option 1: Download exe (recommended for Windows)
 
-Download `dsv4-cc-proxy-gui.exe` from [Releases](https://github.com/Friend-Xu/dsv4-cc-proxy/releases), double-click to run.
+Download `dsv4-cc-proxy-tray.exe` from [Releases](https://github.com/Friend-Xu/dsv4-cc-proxy/releases), double-click to run.
 
 - **No Python required** — self-contained, all dependencies bundled
 - **No black console window** — clean GUI only
@@ -64,7 +64,7 @@ Point Claude Code to the proxy by adding to your `settings.local.json`:
 - **Start / Stop** proxy with one click
 - **Real-time colored log** display with auto-scroll
 - **Config panel** — upstream URL, listen address, log level
-- **Persistent settings** saved to `~/.dsv4-cc-proxy-gui.json`
+- **Persistent settings** saved to `~/.dsv4-cc-proxy-tray.json`
 - **Cross-platform process management** — works on Windows without POSIX signals
 
 ## Configuration

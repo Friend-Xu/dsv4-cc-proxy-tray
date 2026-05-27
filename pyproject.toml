@@ -3,8 +3,8 @@ requires = ["setuptools>=75"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "dsv4-cc-proxy"
-description = "DeepSeek Anthropic API 兼容性代理 — 让 Claude Code 在 DeepSeek V4 模型上稳定运行"
+name = "dsv4-cc-proxy-tray"
+description = "DeepSeek V4 Claude Code proxy with Windows GUI tray — 一键启动，无需终端"
 readme = "README.md"
 license = {file = "LICENSE"}
 requires-python = ">=3.11"

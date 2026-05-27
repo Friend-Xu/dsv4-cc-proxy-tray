@@ -1,4 +1,4 @@
-# dsv4-cc-proxy / GUI — tkinter 图形界面启动器
+# dsv4-cc-proxy-tray — Windows 系统托盘 GUI 启动器
 #
 # 在后台 daemon 线程中内嵌运行 uvicorn，不启动子进程。
 # 避免 PyInstaller exe 中子进程重新触发 GUI 的循环启动问题。
@@ -29,8 +29,8 @@ _DEFAULT_LISTEN = "127.0.0.1:16889"
 _DEFAULT_LOG_LEVEL = "warning"
 
 # ── 持久化配置路径 ──────────────────────────────────────────
-_CONFIG_PATH = Path.home() / ".dsv4-cc-proxy-gui.json"
-_GUI_LOCKFILE = Path.home() / ".dsv4-cc-proxy-gui.lock"
+_CONFIG_PATH = Path.home() / ".dsv4-cc-proxy-tray.json"
+_GUI_LOCKFILE = Path.home() / ".dsv4-cc-proxy-tray.lock"
 
 
 def _load_config() -> dict:
@@ -107,7 +107,7 @@ def main():
             if _is_process_running(old_pid):
                 import ctypes
                 ctypes.windll.user32.MessageBoxW(0,
-                    "dsv4-cc-proxy GUI 已在运行中，请查看系统托盘或任务栏。",
+                    "dsv4-cc-proxy-tray 已在运行中，请查看系统托盘或任务栏。",
                     "提示", 0x40)
                 sys.exit(0)
             else:
@@ -314,7 +314,7 @@ def main():
     # ── 窗口根 ──
 
     root = tk.Tk()
-    root.title(f"dsv4-cc-proxy v{VERSION} GUI")
+    root.title(f"dsv4-cc-proxy-tray v{VERSION}")
     root.geometry("860x580")
     root.minsize(640, 400)
     try:
