@@ -12,3 +12,8 @@ build/
 __启动脚本.bat
 dsv4-cc-proxy-tray.spec
 CLAUDE.md
+promotional/
+proxy/
+Dockerfile
+docker-compose.yml
+*.plist
