@@ -4,11 +4,11 @@
 
 | 渠道 | 地址 | 更新方式 | 状态 |
 |---|---|---|---|
-| GitHub 源码 | https://github.com/HosheaLi/dsv4-cc-proxy | `git push` | 已发布 |
+| GitHub 源码 | https://github.com/Friend-Xu/dsv4-cc-proxy | `git push` | 已发布 |
 | Docker Hub | `hosheali/dsv4-cc-proxy` | CI 自动推送 (push main 触发) | 已发布 |
 | GitHub Pages | https://hosheali.github.io/dsv4-cc-proxy | CI 自动部署 (push main 触发) | 已发布 |
 | PyPI | `dsv4-cc-proxy` | 待实现 (需 pyproject.toml + tag 触发 CI) | 待实现 |
-| Homebrew Tap | `HosheaLi/homebrew-tap` | 待实现 (Formula + CI 自动更新) | 待实现 |
+| Homebrew Tap | `Friend-Xu/homebrew-tap` | 待实现 (Formula + CI 自动更新) | 待实现 |
 
 ---
 
@@ -16,7 +16,7 @@
 
 | 平台 | 安装命令 |
 |---|---|
-| macOS | `brew tap HosheaLi/tap && brew install dsv4-cc-proxy && brew services start dsv4-cc-proxy` |
+| macOS | `brew tap Friend-Xu/homebrew-tap && brew install dsv4-cc-proxy && brew services start dsv4-cc-proxy` |
 | Windows/Linux | `pip install dsv4-cc-proxy && dsv4-cc-proxy` |
 | 通用 (容器化) | `docker run -d --restart unless-stopped -p 16889:16889 hosheali/dsv4-cc-proxy:latest` |
 
@@ -80,8 +80,8 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/HosheaLi/dsv4-cc-proxy"
-Source = "https://github.com/HosheaLi/dsv4-cc-proxy"
+Homepage = "https://github.com/Friend-Xu/dsv4-cc-proxy"
+Source = "https://github.com/Friend-Xu/dsv4-cc-proxy"
 
 [project.scripts]
 dsv4-cc-proxy = "dsv4_cc_proxy.__main__:main"
@@ -97,7 +97,7 @@ twine upload dist/*
 
 ### 4. 创建 Homebrew Tap
 
-创建仓库 `github.com/HosheaLi/homebrew-tap`，添加 `Formula/dsv4-cc-proxy.rb`。
+创建仓库 `github.com/Friend-Xu/homebrew-tap`，添加 `Formula/dsv4-cc-proxy.rb`。
 
 ### 5. 更新 CI (补充 PyPI 发布 + 版本 tag)
 

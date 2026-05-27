@@ -111,7 +111,7 @@ CI publish job 完成后自动执行:
 - github-release: 创建 GitHub Release (从 pyproject.toml 读版本号)
 - pypi-publish: Trusted Publishing (OIDC)，无需 token
 - docker-publish: 构建 + docker/metadata-action (添加 semver 标签) + push
-- homebrew-update: 检出 HosheaLi/homebrew-tap → 更新 Formula 的 url/sha256 → push
+- homebrew-update: 检出 Friend-Xu/homebrew-tap → 更新 Formula 的 url/sha256 → push
 
 认证 secret 配置:
 - `DOCKERHUB_TOKEN`: Docker Hub personal access token
@@ -119,7 +119,7 @@ CI publish job 完成后自动执行:
 
 ### Step 4: Homebrew Tap
 
-在 `HosheaLi/homebrew-tap` 仓库中创建 `Formula/dsv4-cc-proxy.rb`:
+在 `Friend-Xu/homebrew-tap` 仓库中创建 `Formula/dsv4-cc-proxy.rb`:
 - 使用 `virtualenv_install_with_resources` (纯 Python 包)
 - url 指向 PyPI sdist: `https://files.pythonhosted.org/packages/source/d/dsv4-cc-proxy/dsv4_cc_proxy-{version}.tar.gz`
 - `depends_on "python@3.13"` (仅声明 Python 依赖，无其他系统依赖)
@@ -136,7 +136,7 @@ CI 自动更新: publish job 中运行脚本，用新的 version + sha256 替换
 5. `git push origin main && git push origin v1.8.0`
 6. 在 Actions 页确认 CI publish 全部成功
 7. 手动验证: `pip install dsv4-cc-proxy` / `docker pull hosheali/dsv4-cc-proxy:1.8.0`
-8. 验证 Homebrew: `brew tap HosheaLi/tap && brew install dsv4-cc-proxy`
+8. 验证 Homebrew: `brew tap Friend-Xu/homebrew-tap && brew install dsv4-cc-proxy`
 
 ## 文件变更清单
 
@@ -152,7 +152,7 @@ CI 自动更新: publish job 中运行脚本，用新的 version + sha256 替换
 | 修改 | `.github/workflows/ci.yml` |
 | 修改 | `scripts/*` 中的路径引用 |
 | 修改 | `~/Library/LaunchAgents/com.deepseek.thinking-proxy.plist` |
-| 新建 | `HosheaLi/homebrew-tap/Formula/dsv4-cc-proxy.rb` |
+| 新建 | `Friend-Xu/homebrew-tap/Formula/dsv4-cc-proxy.rb` |
 | 删除 | `proxy/deepseek-thinking-proxy.py` |
 | 删除 | `proxy/test_proxy.py` |
 | 删除 | `proxy/requirements.txt` |

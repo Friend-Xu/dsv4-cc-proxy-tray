@@ -18,7 +18,7 @@ If you've tried using Claude Code with DeepSeek V4 you've probably run into:
 
 I traced these to three specific incompatibilities between DeepSeek V4's Anthropic API implementation and what Claude Code expects. Built a minimal proxy (~300 lines Python) that fixes all three.
 
-**Repository:** https://github.com/HosheaLi/dsv4-cc-proxy
+**Repository:** https://github.com/Friend-Xu/dsv4-cc-proxy
 
 **Key features:**
 - Fixes thinking injection, thinking mode normalization, and SSE event stripping

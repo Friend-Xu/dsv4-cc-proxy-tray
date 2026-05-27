@@ -18,7 +18,7 @@ DeepSeek 官方文档对思考模式的行为作了明确说明：
 > - 在两个 user 消息之间，如果模型**未进行工具调用**，则中间 assistant 的 `reasoning_content` 无需参与上下文拼接，在后续轮次中将其传入 API 会被忽略。
 > - 在两个 user 消息之间，如果模型**进行了工具调用**，则中间 assistant 的 `reasoning_content` 需参与上下文拼接，在后续所有 user 交互轮次中**必须回传**给 API。
 
-代理中间件的核心设计思路正是基于上述规则：在工具调用场景下自动补全 `reasoning_content` 的结构要求，在响应端剥离 DeepSeek 无条件返回的 thinking 事件。项目已开源：[dsv4-cc-proxy](https://github.com/HosheaLi/dsv4-cc-proxy)
+代理中间件的核心设计思路正是基于上述规则：在工具调用场景下自动补全 `reasoning_content` 的结构要求，在响应端剥离 DeepSeek 无条件返回的 thinking 事件。项目已开源：[dsv4-cc-proxy](https://github.com/Friend-Xu/dsv4-cc-proxy)
 
 ---
 
@@ -107,6 +107,6 @@ docker run -d -p 16889:16889 --name dsv4-cc-proxy hosheali/dsv4-cc-proxy:latest
 
 - [DeepSeek Thinking Mode 官方文档](https://api-docs.deepseek.com/guides/thinking_mode)
 - [Claude Code 配置指南](https://docs.anthropic.com/en/docs/claude-code/setup)
-- [项目仓库 — dsv4-cc-proxy](https://github.com/HosheaLi/dsv4-cc-proxy)
+- [项目仓库 — dsv4-cc-proxy](https://github.com/Friend-Xu/dsv4-cc-proxy)
 
 如果你有在使用 DeepSeek V4 + Claude Code 的组合，这个工具可以省去排查兼容性问题的时间。欢迎在评论区交流，或在 GitHub 提交 Issue 和 PR。

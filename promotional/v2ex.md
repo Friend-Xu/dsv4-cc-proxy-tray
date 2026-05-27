@@ -14,7 +14,7 @@ Claude Code 很强大，但官方只走 Anthropic API。DeepSeek V4 实现了 An
 
 一个一个排查出来，写了个轻量代理在中间透明修复，让 Claude Code 在 DeepSeek V4 上稳定跑。
 
-**dsv4-cc-proxy**：https://github.com/HosheaLi/dsv4-cc-proxy
+**dsv4-cc-proxy**：https://github.com/Friend-Xu/dsv4-cc-proxy
 
 特点：
 - 纯 Python，Starlette + httpx，无外部服务依赖

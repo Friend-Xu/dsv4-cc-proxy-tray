@@ -6,7 +6,7 @@
 
 Anthropic API 兼容性代理，修复 DeepSeek V4 的 3 个不兼容问题。
 
-> **源仓库:** [github.com/HosheaLi/P14_dsv4ToCC](https://github.com/HosheaLi/P14_dsv4ToCC)
+> **源仓库:** [github.com/Friend-Xu/dsv4-cc-proxy](https://github.com/Friend-Xu/dsv4-cc-proxy)
 
 ```
 Claude Code ←→ localhost:16889 (dsv4-cc-proxy) ←→ api.deepseek.com/anthropic
@@ -14,7 +14,7 @@ Claude Code ←→ localhost:16889 (dsv4-cc-proxy) ←→ api.deepseek.com/anthr
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue)](https://www.python.org)
-[![CI](https://github.com/HosheaLi/dsv4-cc-proxy/actions/workflows/ci.yml/badge.svg)](https://github.com/HosheaLi/dsv4-cc-proxy/actions)
+[![CI](https://github.com/Friend-Xu/dsv4-cc-proxy/actions/workflows/ci.yml/badge.svg)](https://github.com/Friend-Xu/dsv4-cc-proxy/actions)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey)]()
 [![Docker Pulls](https://img.shields.io/docker/pulls/hosheali/dsv4-cc-proxy)](https://hub.docker.com/r/hosheali/dsv4-cc-proxy)
 

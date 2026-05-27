@@ -149,7 +149,7 @@ jobs:
     - name: Update Homebrew tap
       run: |
         VERSION="${{ steps.tag.outputs.VERSION }}"
-        TAP_REPO="HosheaLi/homebrew-tap"
+        TAP_REPO="Friend-Xu/homebrew-tap"
         FORMULA_PATH="Formula/dsv4-cc-proxy.rb"
 
         git clone "https://x-access-token:${GITHUB_TOKEN}@github.com/${TAP_REPO}.git" tap

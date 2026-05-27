@@ -6,7 +6,7 @@ Show HN: dsv4-cc-proxy – Run Claude Code on DeepSeek V4 without errors
 
 ## URL
 
-https://github.com/HosheaLi/dsv4-cc-proxy
+https://github.com/Friend-Xu/dsv4-cc-proxy
 
 ## Text
 
@@ -18,7 +18,7 @@ DeepSeek V4 implements the Anthropic API format, but Claude Code expects a few t
 2. Claude Code sends `thinking.type=adaptive` with `reasoning_effort`, which DeepSeek only handles as `enabled`/`disabled`
 3. DeepSeek unconditionally emits SSE `thinking` events that confuse Claude Code's parser
 
-I built a lightweight proxy that fixes all three transparently: https://github.com/HosheaLi/dsv4-cc-proxy
+I built a lightweight proxy that fixes all three transparently: https://github.com/Friend-Xu/dsv4-cc-proxy
 
 - Python/Starlette/httpx, ~300 lines, zero external dependencies beyond those three
 - 22 unit tests

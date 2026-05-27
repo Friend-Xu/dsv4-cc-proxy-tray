@@ -89,6 +89,6 @@ docker run -d -p 16889:16889 --name dsv4-cc-proxy hosheali/dsv4-cc-proxy:latest
 
 - [DeepSeek Thinking Mode 官方文档](https://api-docs.deepseek.com/guides/thinking_mode)
 - [Claude Code 配置指南](https://docs.anthropic.com/en/docs/claude-code/setup)
-- [项目仓库 — dsv4-cc-proxy](https://github.com/HosheaLi/dsv4-cc-proxy)
+- [项目仓库 — dsv4-cc-proxy](https://github.com/Friend-Xu/dsv4-cc-proxy)
 
 如果你有在使用 DeepSeek V4 + Claude Code 的组合，这个工具可以省去排查兼容性问题的时间。欢迎在评论区交流，或在 GitHub 提交 Issue 和 PR。
