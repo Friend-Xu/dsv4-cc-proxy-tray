@@ -101,6 +101,14 @@ class _QueueHandler(logging.Handler):
 
 
 def main():
+    # 全局异常捕获：错误写入文件以便调试无控制台的 exe
+    _ERROR_LOG = Path.home() / ".dsv4-cc-proxy-tray-error.log"
+    def _excepthook(exc_type, exc_val, exc_tb):
+        import traceback
+        _ERROR_LOG.write_text("".join(traceback.format_exception(exc_type, exc_val, exc_tb)), encoding="utf-8")
+        sys.__excepthook__(exc_type, exc_val, exc_tb)
+    sys.excepthook = _excepthook
+
     import tkinter as tk
     from tkinter import ttk, messagebox
 
@@ -150,12 +158,15 @@ def main():
     def _setup_logging(log_level: str):
         handler = _QueueHandler(log_queue)
         lvl = getattr(logging, log_level.upper(), logging.WARNING)
-        # 只给根 logger 挂 QueueHandler，uvicorn 子 logger（uvicorn.error）
-        # 默认 propagate=True，会自动传播到根 logger。
-        # 不要手动给 uvicorn.* logger 挂 handler，避免与 uvicorn 默认 logging config 冲突。
+        # 根 logger 的 level 控制 GUI 中可见的最低日志级别
         root_logger = logging.getLogger()
         root_logger.handlers = [handler]
         root_logger.setLevel(lvl)
+        # proxy.py 用 logger.getLogger("deepseek-proxy") 写业务日志，
+        # 确保其 propagate=True 且 level ≤ log_level。
+        plog = logging.getLogger("deepseek-proxy")
+        plog.propagate = True
+        plog.setLevel(logging.DEBUG)
 
     def start():
         nonlocal _server, _server_thread
@@ -180,16 +191,28 @@ def main():
         _append_text(f"启动代理 v{VERSION}\n", "INFO")
 
         # 在主线程 import，确保环境变量已设置
-        import uvicorn
-        from dsv4_cc_proxy.proxy import create_app
+        try:
+            import uvicorn
+            from dsv4_cc_proxy.proxy import create_app
 
-        config = uvicorn.Config(
-            app=create_app(),
-            host=host,
-            port=port,
-            log_level=log_level,
-        )
-        _server = uvicorn.Server(config)
+            # log_config=None 阻止 uvicorn 用 dictConfig 覆盖 root logger
+            # log_config=None 阻止 uvicorn 覆盖 root handler。
+            # uvicorn log_level 固定 info 以确保启动日志输出；
+            # 用户可在 GUI 下拉框控制 root logger 最低可见级别。
+            config = uvicorn.Config(
+                app=create_app(),
+                host=host,
+                port=port,
+                log_level="info",
+                log_config=None,
+            )
+            _server = uvicorn.Server(config)
+        except Exception:
+            import traceback
+            err = traceback.format_exc()
+            _ERROR_LOG.write_text(err, encoding="utf-8")
+            _append_text(f"启动失败:\n{err}\n", "ERROR")
+            return
 
         def _run_server():
             nonlocal _server, _server_thread

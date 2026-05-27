@@ -51,6 +51,8 @@ Download `dsv4-cc-proxy-tray.exe` from [Releases](https://github.com/Friend-Xu/d
 ```bash
 pip install -e .
 python dsv4_cc_proxy/gui.py
+# 或直接双击
+scripts\start_gui.bat
 ```
 
 ### Configure Claude Code
