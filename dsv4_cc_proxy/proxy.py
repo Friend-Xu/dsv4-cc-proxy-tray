@@ -1026,6 +1026,7 @@ async def proxy_responses(request):
         resp_id = f"resp_{uuid.uuid4().hex[:24]}"
         msg_id = f"msg_{resp_id[-8:]}"
 
+        seq = 0
         started = False
         msg_item_added = False
         content_part_added = False
@@ -1035,6 +1036,12 @@ async def proxy_responses(request):
         tool_calls: dict[int, dict] = {}  # index → {id, name, args}
         buffer = ""
 
+        def _next_seq() -> int:
+            nonlocal seq
+            s = seq
+            seq += 1
+            return s
+
         _dump_path = Path.home() / ".dsv4-cc-proxy-sse-dump.txt"
 
         def _dump(data: bytes) -> bytes:
@@ -1042,8 +1049,9 @@ async def proxy_responses(request):
                 f.write(data)
             return data
 
-        def _emit(s: str) -> bytes:
-            return _dump(f"data: {s}\n\n".encode())
+        def _emit(event: dict) -> bytes:
+            event["sequence_number"] = _next_seq()
+            return _dump(f"data: {json.dumps(event)}\n\n".encode())
 
         try:
             async for data in upstream_resp.aiter_bytes():
@@ -1070,19 +1078,17 @@ async def proxy_responses(request):
                     if not started:
                         started = True
                         yield _emit(
-                            json.dumps(
-                                {
-                                    "type": "response.created",
-                                    "response": {
-                                        "id": resp_id,
-                                        "object": "response",
-                                        "status": "in_progress",
-                                        "model": model,
-                                    },
-                                }
-                            )
+                            {
+                                "type": "response.created",
+                                "response": {
+                                    "id": resp_id,
+                                    "object": "response",
+                                    "status": "in_progress",
+                                    "model": model,
+                                },
+                            }
                         )
-                        yield _emit(json.dumps({"type": "response.in_progress", "response": {"id": resp_id}}))
+                        yield _emit({"type": "response.in_progress", "response": {"id": resp_id}})
 
                     # 处理 reasoning_content
                     if delta.get("reasoning_content"):
@@ -1090,36 +1096,30 @@ async def proxy_responses(request):
                         if not current_reasoning:
                             rs_id = f"rs_{resp_id[-8:]}"
                             yield _emit(
-                                json.dumps(
-                                    {
-                                        "type": "response.output_item.added",
-                                        "output_index": 0,
-                                        "item": {"id": rs_id, "type": "reasoning", "status": "in_progress"},
-                                    }
-                                )
+                                {
+                                    "type": "response.output_item.added",
+                                    "output_index": 0,
+                                    "item": {"id": rs_id, "type": "reasoning", "status": "in_progress"},
+                                }
                             )
                             yield _emit(
-                                json.dumps(
-                                    {
-                                        "type": "response.content_part.added",
-                                        "item_id": rs_id,
-                                        "output_index": 0,
-                                        "content_index": 0,
-                                        "part": {"type": "summary_text", "text": ""},
-                                    }
-                                )
+                                {
+                                    "type": "response.content_part.added",
+                                    "item_id": rs_id,
+                                    "output_index": 0,
+                                    "content_index": 0,
+                                    "part": {"type": "summary_text", "text": ""},
+                                }
                             )
                         current_reasoning += rc
                         yield _emit(
-                            json.dumps(
-                                {
-                                    "type": "response.output_text.delta",
-                                    "item_id": f"rs_{resp_id[-8:]}",
-                                    "output_index": 0,
-                                    "content_index": 0,
-                                    "delta": rc,
-                                }
-                            )
+                            {
+                                "type": "response.output_text.delta",
+                                "item_id": f"rs_{resp_id[-8:]}",
+                                "output_index": 0,
+                                "content_index": 0,
+                                "delta": rc,
+                            }
                         )
 
                     # 处理 tool_calls
@@ -1136,20 +1136,18 @@ async def proxy_responses(request):
                                 "item_id": item_id,
                             }
                             yield _emit(
-                                json.dumps(
-                                    {
-                                        "type": "response.output_item.added",
-                                        "output_index": idx,
-                                        "item": {
-                                            "id": item_id,
-                                            "type": "function_call",
-                                            "call_id": tc_id,
-                                            "name": func.get("name", ""),
-                                            "arguments": "",
-                                            "status": "in_progress",
-                                        },
-                                    }
-                                )
+                                {
+                                    "type": "response.output_item.added",
+                                    "output_index": idx,
+                                    "item": {
+                                        "id": item_id,
+                                        "type": "function_call",
+                                        "call_id": tc_id,
+                                        "name": func.get("name", ""),
+                                        "arguments": "",
+                                        "status": "in_progress",
+                                    },
+                                }
                             )
                         else:
                             tc = tool_calls.get(idx)
@@ -1157,14 +1155,12 @@ async def proxy_responses(request):
                                 args_delta = func.get("arguments", "")
                                 tc["args"] += args_delta
                                 yield _emit(
-                                    json.dumps(
-                                        {
-                                            "type": "response.function_call_arguments.delta",
-                                            "item_id": tc["item_id"],
-                                            "output_index": idx,
-                                            "delta": args_delta,
-                                        }
-                                    )
+                                    {
+                                        "type": "response.function_call_arguments.delta",
+                                        "item_id": tc["item_id"],
+                                        "output_index": idx,
+                                        "delta": args_delta,
+                                    }
                                 )
 
                     # 处理 text content
@@ -1173,225 +1169,180 @@ async def proxy_responses(request):
                         if not msg_item_added:
                             msg_item_added = True
                             yield _emit(
-                                json.dumps(
-                                    {
-                                        "type": "response.output_item.added",
-                                        "output_index": 0,
-                                        "item": {
-                                            "id": msg_id,
-                                            "type": "message",
-                                            "role": "assistant",
-                                            "status": "in_progress",
-                                        },
-                                    }
-                                )
+                                {
+                                    "type": "response.output_item.added",
+                                    "output_index": 0,
+                                    "item": {
+                                        "id": msg_id,
+                                        "type": "message",
+                                        "role": "assistant",
+                                        "status": "in_progress",
+                                    },
+                                }
                             )
                         if not content_part_added:
                             content_part_added = True
                             yield _emit(
-                                json.dumps(
-                                    {
-                                        "type": "response.content_part.added",
-                                        "item_id": msg_id,
-                                        "output_index": 0,
-                                        "content_index": 0,
-                                        "part": {"type": "output_text", "text": ""},
-                                    }
-                                )
-                            )
-                        current_text += ct
-                        yield _emit(
-                            json.dumps(
                                 {
-                                    "type": "response.output_text.delta",
+                                    "type": "response.content_part.added",
                                     "item_id": msg_id,
                                     "output_index": 0,
                                     "content_index": 0,
-                                    "delta": ct,
+                                    "part": {"type": "output_text", "text": ""},
                                 }
                             )
+                        current_text += ct
+                        yield _emit(
+                            {
+                                "type": "response.output_text.delta",
+                                "item_id": msg_id,
+                                "output_index": 0,
+                                "content_index": 0,
+                                "delta": ct,
+                            }
                         )
 
                     # 处理 finish_reason
                     fr = choice.get("finish_reason")
                     if fr in ("stop", "tool_calls", "length"):
                         finished = True
-                        events = []
 
                         # reasoning done
                         if current_reasoning:
                             rs_id = f"rs_{resp_id[-8:]}"
-                            events += [
-                                json.dumps(
-                                    {
-                                        "type": "response.output_text.done",
-                                        "item_id": rs_id,
-                                        "output_index": 0,
-                                        "text": current_reasoning,
-                                    }
-                                ),
-                                json.dumps(
-                                    {
-                                        "type": "response.content_part.done",
-                                        "item_id": rs_id,
-                                        "output_index": 0,
-                                        "part": {"type": "summary_text", "text": current_reasoning},
-                                    }
-                                ),
-                                json.dumps(
-                                    {
-                                        "type": "response.output_item.done",
-                                        "item": {"id": rs_id, "type": "reasoning", "status": "completed"},
-                                        "output_index": 0,
-                                    }
-                                ),
-                            ]
+                            for ev in [
+                                {
+                                    "type": "response.output_text.done",
+                                    "item_id": rs_id,
+                                    "output_index": 0,
+                                    "text": current_reasoning,
+                                },
+                                {
+                                    "type": "response.content_part.done",
+                                    "item_id": rs_id,
+                                    "output_index": 0,
+                                    "part": {"type": "summary_text", "text": current_reasoning},
+                                },
+                                {
+                                    "type": "response.output_item.done",
+                                    "item": {"id": rs_id, "type": "reasoning", "status": "completed"},
+                                    "output_index": 0,
+                                },
+                            ]:
+                                yield _emit(ev)
 
                         # text message done
                         if msg_item_added:
-                            events += [
-                                json.dumps(
-                                    {
-                                        "type": "response.output_text.done",
-                                        "item_id": msg_id,
-                                        "output_index": 0,
-                                        "text": "",
-                                    }
-                                ),
-                                json.dumps(
-                                    {
-                                        "type": "response.content_part.done",
-                                        "item_id": msg_id,
-                                        "output_index": 0,
-                                        "part": {"type": "output_text", "text": ""},
-                                    }
-                                ),
-                                json.dumps(
-                                    {
-                                        "type": "response.output_item.done",
-                                        "item": {
-                                            "id": msg_id,
-                                            "type": "message",
-                                            "role": "assistant",
-                                            "status": "completed",
-                                        },
-                                        "output_index": 0,
-                                    }
-                                ),
-                            ]
+                            for ev in [
+                                {"type": "response.output_text.done", "item_id": msg_id, "output_index": 0, "text": ""},
+                                {
+                                    "type": "response.content_part.done",
+                                    "item_id": msg_id,
+                                    "output_index": 0,
+                                    "part": {"type": "output_text", "text": ""},
+                                },
+                                {
+                                    "type": "response.output_item.done",
+                                    "item": {
+                                        "id": msg_id,
+                                        "type": "message",
+                                        "role": "assistant",
+                                        "status": "completed",
+                                    },
+                                    "output_index": 0,
+                                },
+                            ]:
+                                yield _emit(ev)
 
                         # tool calls done
                         for tc in tool_calls.values():
-                            events += [
-                                json.dumps(
-                                    {
-                                        "type": "response.function_call_arguments.done",
-                                        "item_id": tc["item_id"],
-                                        "output_index": 0,
+                            for ev in [
+                                {
+                                    "type": "response.function_call_arguments.done",
+                                    "item_id": tc["item_id"],
+                                    "output_index": 0,
+                                    "arguments": tc["args"],
+                                },
+                                {
+                                    "type": "response.output_item.done",
+                                    "item": {
+                                        "id": tc["item_id"],
+                                        "type": "function_call",
+                                        "call_id": tc["id"],
+                                        "name": tc["name"],
                                         "arguments": tc["args"],
-                                    }
-                                ),
-                                json.dumps(
-                                    {
-                                        "type": "response.output_item.done",
-                                        "item": {
-                                            "id": tc["item_id"],
-                                            "type": "function_call",
-                                            "call_id": tc["id"],
-                                            "name": tc["name"],
-                                            "arguments": tc["args"],
-                                            "status": "completed",
-                                        },
-                                        "output_index": 0,
-                                    }
-                                ),
-                            ]
+                                        "status": "completed",
+                                    },
+                                    "output_index": 0,
+                                },
+                            ]:
+                                yield _emit(ev)
 
                         status = "completed" if fr != "length" else "incomplete"
-                        events.append(
-                            json.dumps(
-                                {
-                                    "type": "response.completed",
-                                    "response": {"id": resp_id, "object": "response", "status": status, "model": model},
-                                }
-                            )
+                        yield _emit(
+                            {
+                                "type": "response.completed",
+                                "response": {"id": resp_id, "object": "response", "status": status, "model": model},
+                            }
                         )
 
                         logger.info(
                             "[CODEX-SSE] finished — text=%d chars, tools=%d", len(current_text), len(tool_calls)
                         )
-
-                        for ev in events:
-                            yield _emit(ev)
                         yield _dump(b"data: [DONE]\n\n")
 
             # 流结束时补发 response.completed（上游没发 finish_reason 的情况）
             if not finished and started:
-                events = []
                 if current_reasoning:
                     rs_id = f"rs_{resp_id[-8:]}"
-                    events += [
-                        json.dumps(
-                            {
-                                "type": "response.output_text.done",
-                                "item_id": rs_id,
-                                "output_index": 0,
-                                "text": current_reasoning,
-                            }
-                        ),
-                        json.dumps(
-                            {
-                                "type": "response.content_part.done",
-                                "item_id": rs_id,
-                                "output_index": 0,
-                                "part": {"type": "summary_text", "text": current_reasoning},
-                            }
-                        ),
-                        json.dumps(
-                            {
-                                "type": "response.output_item.done",
-                                "item": {"id": rs_id, "type": "reasoning", "status": "completed"},
-                                "output_index": 0,
-                            }
-                        ),
-                    ]
-                if msg_item_added:
-                    events += [
-                        json.dumps(
-                            {"type": "response.output_text.done", "item_id": msg_id, "output_index": 0, "text": ""}
-                        ),
-                        json.dumps(
-                            {
-                                "type": "response.content_part.done",
-                                "item_id": msg_id,
-                                "output_index": 0,
-                                "part": {"type": "output_text", "text": ""},
-                            }
-                        ),
-                        json.dumps(
-                            {
-                                "type": "response.output_item.done",
-                                "item": {"id": msg_id, "type": "message", "role": "assistant", "status": "completed"},
-                                "output_index": 0,
-                            }
-                        ),
-                    ]
-                events.append(
-                    json.dumps(
+                    for ev in [
                         {
-                            "type": "response.completed",
-                            "response": {
-                                "id": resp_id,
-                                "object": "response",
-                                "status": "completed",
-                                "model": chat_req.get("model", ""),
-                            },
-                        }
-                    )
+                            "type": "response.output_text.done",
+                            "item_id": rs_id,
+                            "output_index": 0,
+                            "text": current_reasoning,
+                        },
+                        {
+                            "type": "response.content_part.done",
+                            "item_id": rs_id,
+                            "output_index": 0,
+                            "part": {"type": "summary_text", "text": current_reasoning},
+                        },
+                        {
+                            "type": "response.output_item.done",
+                            "item": {"id": rs_id, "type": "reasoning", "status": "completed"},
+                            "output_index": 0,
+                        },
+                    ]:
+                        yield _emit(ev)
+                if msg_item_added:
+                    for ev in [
+                        {"type": "response.output_text.done", "item_id": msg_id, "output_index": 0, "text": ""},
+                        {
+                            "type": "response.content_part.done",
+                            "item_id": msg_id,
+                            "output_index": 0,
+                            "part": {"type": "output_text", "text": ""},
+                        },
+                        {
+                            "type": "response.output_item.done",
+                            "item": {"id": msg_id, "type": "message", "role": "assistant", "status": "completed"},
+                            "output_index": 0,
+                        },
+                    ]:
+                        yield _emit(ev)
+                yield _emit(
+                    {
+                        "type": "response.completed",
+                        "response": {
+                            "id": resp_id,
+                            "object": "response",
+                            "status": "completed",
+                            "model": chat_req.get("model", ""),
+                        },
+                    }
                 )
                 logger.info("[CODEX-SSE] stream-ended without finish_reason — forced complete")
-                for ev in events:
-                    yield _emit(ev)
                 yield _dump(b"data: [DONE]\n\n")
 
         except Exception:
