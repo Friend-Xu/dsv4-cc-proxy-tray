@@ -19,6 +19,7 @@ from pathlib import Path
 # ── 版本（独立定义，不 import proxy 模块） ─────────────────
 try:
     from dsv4_cc_proxy._version import VERSION as _ver
+
     VERSION = _ver
 except ImportError:
     _VERSION_PATH = Path(__file__).resolve().parent / "_version.py"
@@ -54,11 +55,11 @@ def _save_config(cfg: dict) -> None:
 # ── 日志颜色标记 ─────────────────────────────────────────────
 
 _COLOR_TAGS = {
-    "ERROR":   "red",
+    "ERROR": "red",
     "CRITICAL": "darkred",
-    "WARNING":  "orange",
-    "INFO":     "black",
-    "DEBUG":    "gray",
+    "WARNING": "orange",
+    "INFO": "black",
+    "DEBUG": "gray",
 }
 
 _LOG_LINE_RE = re.compile(r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3})\s+(\w+)\s+(.*)$")
@@ -66,12 +67,14 @@ _LOG_LINE_RE = re.compile(r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3})\s+(\w+)
 
 # ── 跨平台进程检查 ──────────────────────────────────────────
 
+
 def _is_process_running(pid: int) -> bool:
     if sys.platform == "win32":
         try:
             output = subprocess.check_output(
                 f'tasklist /FI "PID eq {pid}" /FO CSV',
-                shell=True, stderr=subprocess.DEVNULL,
+                shell=True,
+                stderr=subprocess.DEVNULL,
             ).decode("gbk", errors="ignore")
             return f'"{pid}"' in output
         except Exception:
@@ -86,8 +89,10 @@ def _is_process_running(pid: int) -> bool:
 
 # ── 日志捕获 Handler ──────────────────────────────────────
 
+
 class _QueueHandler(logging.Handler):
     """将 logging 记录转发到 tkinter 日志队列。"""
+
     def __init__(self, q: queue.Queue):
         super().__init__()
         self.q = q
@@ -103,10 +108,13 @@ class _QueueHandler(logging.Handler):
 def main():
     # 全局异常捕获：错误写入文件以便调试无控制台的 exe
     _ERROR_LOG = Path.home() / ".dsv4-cc-proxy-tray-error.log"
+
     def _excepthook(exc_type, exc_val, exc_tb):
         import traceback
+
         _ERROR_LOG.write_text("".join(traceback.format_exception(exc_type, exc_val, exc_tb)), encoding="utf-8")
         sys.__excepthook__(exc_type, exc_val, exc_tb)
+
     sys.excepthook = _excepthook
 
     import tkinter as tk
@@ -118,9 +126,10 @@ def main():
             old_pid = int(_GUI_LOCKFILE.read_text().strip())
             if _is_process_running(old_pid):
                 import ctypes
-                ctypes.windll.user32.MessageBoxW(0,
-                    "dsv4-cc-proxy-tray 已在运行中，请查看系统托盘或任务栏。",
-                    "提示", 0x40)
+
+                ctypes.windll.user32.MessageBoxW(
+                    0, "dsv4-cc-proxy-tray 已在运行中，请查看系统托盘或任务栏。", "提示", 0x40
+                )
                 sys.exit(0)
             else:
                 _GUI_LOCKFILE.unlink(missing_ok=True)
@@ -133,8 +142,8 @@ def main():
 
     # ── 状态 ──
     _server_stop = threading.Event()
-    _server = None               # uvicorn.Server
-    _server_thread = None        # threading.Thread
+    _server = None  # uvicorn.Server
+    _server_thread = None  # threading.Thread
     log_queue: queue.Queue = queue.Queue()
 
     def _parse_host_port(s: str) -> tuple[str, int]:
@@ -181,11 +190,13 @@ def main():
         host, port = _parse_host_port(listen_addr)
         _set_env(upstream, host, port, log_level)
 
-        _save_config({
-            "upstream": upstream,
-            "listen": listen_addr,
-            "log_level": log_level,
-        })
+        _save_config(
+            {
+                "upstream": upstream,
+                "listen": listen_addr,
+                "log_level": log_level,
+            }
+        )
 
         _setup_logging(log_level)
         _append_text(f"启动代理 v{VERSION}\n", "INFO")
@@ -210,6 +221,7 @@ def main():
             _server = uvicorn.Server(config)
         except Exception:
             import traceback
+
             err = traceback.format_exc()
             _ERROR_LOG.write_text(err, encoding="utf-8")
             _append_text(f"启动失败:\n{err}\n", "ERROR")
@@ -242,10 +254,10 @@ def main():
     def _update_status():
         def _do():
             running = _server is not None
-            status_label.config(text="● 运行中" if running else "○ 已停止",
-                               foreground="green" if running else "gray")
+            status_label.config(text="● 运行中" if running else "○ 已停止", foreground="green" if running else "gray")
             start_btn.config(state="disabled" if running else "normal")
             stop_btn.config(state="normal" if running else "disabled")
+
         root.after(0, _do)
 
     # ── 日志轮询（批量插入，避免高频操作阻塞 GUI） ──
@@ -331,6 +343,7 @@ def main():
 
     def save_log():
         from tkinter import filedialog
+
         path = filedialog.asksaveasfilename(
             defaultextension=".log",
             filetypes=[("日志文件", "*.log"), ("文本文件", "*.txt"), ("全部", "*.*")],
@@ -366,7 +379,8 @@ def main():
     log_level_var = tk.StringVar(value=saved.get("log_level", _DEFAULT_LOG_LEVEL))
     levels = ["debug", "info", "warning", "error", "critical"]
     ttk.Combobox(cfg_frame, textvariable=log_level_var, values=levels, state="readonly", width=10).grid(
-        row=2, column=1, sticky="w", pady=2)
+        row=2, column=1, sticky="w", pady=2
+    )
 
     cfg_frame.columnconfigure(1, weight=1)
 
@@ -383,15 +397,14 @@ def main():
     status_label = ttk.Label(btn_frame, text="○ 已停止", foreground="gray")
     status_label.pack(side="left", padx=(0, 12))
 
-    ttk.Label(btn_frame, text=f"上游: {_DEFAULT_UPSTREAM}").pack(side="left", padx=(0, 0))
+    ttk.Label(btn_frame, text="路由: Claude Code + Codex").pack(side="left", padx=(0, 0))
 
     # ── 日志区 ──
 
     log_frame = ttk.LabelFrame(root, text="日志", padding=4)
     log_frame.pack(fill="both", expand=True, padx=10, pady=(4, 4))
 
-    log_text = tk.Text(log_frame, state="disabled", wrap="word",
-                       font=("Consolas", 9), relief="sunken", borderwidth=1)
+    log_text = tk.Text(log_frame, state="disabled", wrap="word", font=("Consolas", 9), relief="sunken", borderwidth=1)
     log_scroll = ttk.Scrollbar(log_frame, command=log_text.yview)
     log_text.configure(yscrollcommand=log_scroll.set)
 

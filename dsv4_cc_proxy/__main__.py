@@ -16,15 +16,14 @@ from dsv4_cc_proxy.proxy import DUMP_DIR, HOST, LOG_LEVEL, PORT
 # 使用系统临时目录，自动适配 Windows / Linux / macOS
 PIDFILE_DEFAULT = os.path.join(tempfile.gettempdir(), "dsv4-cc-proxy.pid")
 
+
 def _is_process_running(pid):
     """跨平台检查进程是否存活"""
     if sys.platform == "win32":
         try:
             output = subprocess.check_output(
-                f'tasklist /FI "PID eq {pid}" /FO CSV',
-                shell=True,
-                stderr=subprocess.DEVNULL
-            ).decode('gbk', errors='ignore')
+                f'tasklist /FI "PID eq {pid}" /FO CSV', shell=True, stderr=subprocess.DEVNULL
+            ).decode("gbk", errors="ignore")
             return f'"{pid}"' in output
         except Exception:
             return False
@@ -34,6 +33,7 @@ def _is_process_running(pid):
             return True
         except OSError:
             return False
+
 
 def _safe_unlink(path, retries=5):
     """安全删除文件，解决 Windows 下文件可能被瞬间锁定的问题"""
@@ -45,6 +45,7 @@ def _safe_unlink(path, retries=5):
             time.sleep(0.5)
         except FileNotFoundError:
             return
+
 
 def _stop(pidfile: str):
     """停止代理实例（跨平台）"""
@@ -59,7 +60,7 @@ def _stop(pidfile: str):
 
     if sys.platform == "win32":
         # Windows: 使用 taskkill 终止进程树
-        subprocess.run(['taskkill', '/PID', str(pid), '/T', '/F'], check=False)
+        subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], check=False)
         _safe_unlink(pidfile)
         print("Proxy stopped (forced).")
         return
@@ -86,6 +87,7 @@ def _stop(pidfile: str):
         pass
     _safe_unlink(pidfile)
     print("Proxy stopped (forced).")
+
 
 def main():
     parser = argparse.ArgumentParser(description="DeepSeek Thinking Proxy")
@@ -142,6 +144,7 @@ def main():
     finally:
         # 正常退出时再次确保清理（atexit 已经注册，这里做双重保障）
         _safe_unlink(pidfile)
+
 
 if __name__ == "__main__":
     main()
