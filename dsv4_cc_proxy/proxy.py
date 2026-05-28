@@ -1179,6 +1179,7 @@ async def proxy_responses(request):
                                         "type": "message",
                                         "role": "assistant",
                                         "status": "in_progress",
+                                        "content": [],
                                     },
                                 }
                             )
