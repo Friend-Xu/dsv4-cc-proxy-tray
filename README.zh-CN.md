@@ -18,6 +18,8 @@ Codex CLI   ←→ localhost:16889 /v1/chat/completions ──→ api.deepseek.c
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue)](https://www.python.org)
 [![Platform](https://img.shields.io/badge/platform-Windows-blue)]()
 
+<p align="center"><img src="Logo.png" width="128" alt="Logo"></p>
+
 ![screenshot](screenshot.png)
 
 </div>
