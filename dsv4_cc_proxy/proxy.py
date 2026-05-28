@@ -1051,7 +1051,11 @@ async def proxy_responses(request):
 
         def _emit(event: dict) -> bytes:
             event["sequence_number"] = _next_seq()
-            return _dump(f"data: {json.dumps(event)}\n\n".encode())
+            ev_type = event.get("type", "")
+            payload = json.dumps(event, ensure_ascii=False)
+            if ev_type:
+                return _dump(f"event: {ev_type}\ndata: {payload}\n\n".encode())
+            return _dump(f"data: {payload}\n\n".encode())
 
         try:
             async for data in upstream_resp.aiter_bytes():
