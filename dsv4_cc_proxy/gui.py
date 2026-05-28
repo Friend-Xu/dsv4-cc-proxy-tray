@@ -63,9 +63,9 @@ _COLOR_TAGS = {
 }
 
 _ROUTE_COLORS = {
-    "CC": {"tag": "cc-route", "color": "#8B4513"},      # 棕色 — Claude Code
-    "CODEX": {"tag": "codex-route", "color": "#2E8B57"},  # 绿色 — Codex
-    "CHAT": {"tag": "codex-route", "color": "#2E8B57"},   # 绿色 — Codex chat
+    "CC": {"tag": "cc-route", "color": "#A0522D"},       # sienna — Claude Code
+    "CODEX": {"tag": "codex-route", "color": "#228B22"},  # forest green — Codex
+    "CHAT": {"tag": "codex-route", "color": "#228B22"},   # forest green — Codex chat
 }
 
 _LOG_LINE_RE = re.compile(r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3})\s+(\w+)\s+(.*)$")
