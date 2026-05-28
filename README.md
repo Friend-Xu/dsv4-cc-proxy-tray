@@ -4,14 +4,16 @@
 
 # dsv4-cc-proxy-tray
 
-**Make DeepSeek V4 work flawlessly with Claude Code on Windows**
+**Make DeepSeek V4 work flawlessly with Claude Code & Codex CLI on Windows**
 
-Anthropic API compatibility proxy with a native Windows GUI — one-click launch, no terminal needed.
+Anthropic API + OpenAI Responses API compatibility proxy with a native Windows GUI — one-click launch, no terminal needed.
 
 > **源仓库:** [github.com/HosheaLi/dsv4-cc-proxy](https://github.com/HosheaLi/dsv4-cc-proxy)
 
 ```
-Claude Code ←→ localhost:16889 (dsv4-cc-proxy) ←→ api.deepseek.com/anthropic
+Claude Code ←→ localhost:16889 /v1/messages    ──→ api.deepseek.com/anthropic
+Codex CLI   ←→ localhost:16889 /v1/responses   ──→ api.deepseek.com/v1/chat/completions
+Codex CLI   ←→ localhost:16889 /v1/chat/completions ──→ api.deepseek.com/v1/chat/completions
 ```
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
@@ -26,7 +28,9 @@ Claude Code ←→ localhost:16889 (dsv4-cc-proxy) ←→ api.deepseek.com/anthr
 
 ## Why dsv4-cc-proxy
 
-DeepSeek V4 implements the Anthropic API format, but has 3 critical incompatibilities that break Claude Code. This proxy fixes them transparently.
+DeepSeek V4 has protocol incompatibilities that break both Claude Code and Codex CLI. This proxy fixes them transparently with zero-config auto-routing.
+
+### Claude Code fixes (Anthropic Messages API)
 
 | # | Problem | Symptom | Fix |
 |---|---------|---------|-----|
@@ -34,7 +38,14 @@ DeepSeek V4 implements the Anthropic API format, but has 3 critical incompatibil
 | 2 | DeepSeek unconditionally emits `thinking`/`signature_delta` SSE events even when thinking is disabled | `Tool result missing due to internal error` in Claude Code | Strip thinking events from the SSE response stream |
 | 3 | `thinking.type=adaptive` (Claude Code default) + `reasoning_effort` not supported by DeepSeek | Stream truncation / 400 errors | Normalize to `disabled` + strip reasoning_effort |
 
-Non-DeepSeek requests and non-`/messages` endpoints pass through with zero overhead.
+### Codex CLI fixes (OpenAI Responses API)
+
+| # | Problem | Symptom | Fix |
+|---|---------|---------|-----|
+| 4 | Codex speaks Responses API (`/v1/responses`) but DeepSeek only provides Chat Completions | 404 or protocol mismatch | Convert Responses → Chat requests + SSE back-translation |
+| 5 | DeepSeek Chat API emits `reasoning_content` in SSE stream | Codex may reject unexpected fields | Strip `reasoning_content` from Chat SSE stream |
+
+Non-DeepSeek requests pass through with zero overhead.
 
 ## Quick Start
 
@@ -51,7 +62,7 @@ Download `dsv4-cc-proxy-tray.exe` from [Releases](https://github.com/Friend-Xu/d
 ```bash
 pip install -e .
 python dsv4_cc_proxy/gui.py
-# 或直接双击
+# or double-click
 scripts\start_gui.bat
 ```
 
@@ -63,6 +74,17 @@ Point Claude Code to the proxy by adding to your `settings.local.json`:
 "ANTHROPIC_BASE_URL": "http://localhost:16889"
 ```
 
+### Configure Codex CLI
+
+Point Codex CLI to the proxy by editing `~/.codex/config.toml`:
+
+```toml
+openai_base_url = "http://localhost:16889/v1"
+model = "deepseek-v4-pro"
+```
+
+The proxy auto-detects the request path and applies the correct fixes — no mode switching needed.
+
 ## GUI Features
 
 - **Start / Stop** proxy with one click
@@ -70,6 +92,7 @@ Point Claude Code to the proxy by adding to your `settings.local.json`:
 - **Config panel** — upstream URL, listen address, log level
 - **Persistent settings** saved to `~/.dsv4-cc-proxy-tray.json`
 - **Cross-platform process management** — works on Windows without POSIX signals
+- **Auto-routing** — serves both Claude Code and Codex CLI simultaneously
 
 ## Configuration
 
@@ -88,8 +111,9 @@ Point Claude Code to the proxy by adding to your `settings.local.json`:
 | tool_use msg without thinking | 400 error | Auto-injected empty thinking |
 | Claude Code sends `thinking.type=adaptive` | Stream truncation / 400 | Normalized to `disabled` |
 | DeepSeek SSE thinking events | Tool result missing error | Silently stripped from stream |
-| Non-messages endpoints | — | Zero-overhead passthrough |
-| Non-DeepSeek models | — | Zero-overhead passthrough |
+| Codex `/v1/responses` → DeepSeek | 404 / protocol mismatch | Converted to Chat + SSE back-translated |
+| DeepSeek Chat `reasoning_content` in SSE | Codex rejects | Silently stripped |
+| Non-DeepSeek models / endpoints | — | Zero-overhead passthrough |
 
 ## How It Works
 
@@ -97,6 +121,7 @@ Point Claude Code to the proxy by adding to your `settings.local.json`:
 ┌─────────────┐     ┌──────────────────┐     ┌────────────────────┐
 │ Claude Code │ ──→ │  dsv4-cc-proxy   │ ──→ │  api.deepseek.com  │
 │             │     │  localhost:16889  │     │  /anthropic        │
+│ Codex CLI   │ ──→ │                  │ ──→ │  /v1/chat/complet. │
 └─────────────┘     └──────────────────┘     └────────────────────┘
                            │
                    ┌───────┴────────┐
@@ -107,8 +132,19 @@ Point Claude Code to the proxy by adding to your `settings.local.json`:
                    │     normalize   │
                    │  3. SSE events   │
                    │     strip       │
+                   │  4. Responses↔  │
+                   │     Chat convert│
                    └────────────────┘
 ```
+
+**Route dispatch** — the proxy registers 3 routes on port 16889:
+
+| Route | Target Client | Processing |
+|-------|---------------|------------|
+| `POST /v1/messages` | Claude Code | Thinking injection + normalize + SSE strip |
+| `POST /v1/responses` | Codex CLI (default) | Responses → Chat request convert + SSE back-translate |
+| `POST /v1/chat/completions` | Codex CLI (`wire_api=chat`) | Thinking normalize + reasoning_content strip |
+| `/*` (catch-all) | Everything else | Zero-overhead passthrough |
 
 ## Project Structure
 
@@ -118,10 +154,10 @@ Point Claude Code to the proxy by adding to your `settings.local.json`:
 │   ├── __init__.py            # Package entry
 │   ├── __main__.py            # CLI entry
 │   ├── _version.py            # VERSION = "1.8.0"
-│   ├── proxy.py               # Core proxy logic
+│   ├── proxy.py               # Core proxy logic (3 routes + 5 fixes)
 │   └── gui.py                 # Windows GUI launcher
 ├── tests/
-│   └── test_proxy.py          # 25 unit tests
+│   └── test_proxy.py          # 35 unit tests
 ├── scripts/
 │   ├── build_exe.bat          # PyInstaller packaging
 │   ├── start_gui.bat          # Dev launch script
