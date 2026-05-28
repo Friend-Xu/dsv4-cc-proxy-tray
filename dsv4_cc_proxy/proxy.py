@@ -1021,7 +1021,13 @@ async def proxy_responses(request):
     import uuid
 
     async def _collect_and_convert():
-        """收集所有 Chat SSE chunks，合并为完整 response，一次性转为 Responses SSE。"""
+        """先立即发出响应头事件，再收集上游 chunks，最后补充剩余事件。"""
+        resp_id = f"resp_{uuid.uuid4().hex[:24]}"
+        # 立即发出 response.created + in_progress 防止 Codex 超时
+        model_hint = chat_req.get("model", "")
+        yield f"data: {json.dumps({'type': 'response.created', 'response': {'id': resp_id, 'object': 'response', 'status': 'in_progress', 'model': model_hint}})}\n".encode()
+        yield f"data: {json.dumps({'type': 'response.in_progress', 'response': {'id': resp_id}})}\n".encode()
+
         chunks: list[dict] = []
         buffer = ""
         try:
@@ -1067,19 +1073,10 @@ async def proxy_responses(request):
                 elif idx in merged_tool_calls:
                     merged_tool_calls[idx]["function"]["arguments"] += func.get("arguments", "")
 
-        resp_id = f"resp_{uuid.uuid4().hex[:24]}"
         msg_id = f"msg_{resp_id[-8:]}"
         tool_items = list(merged_tool_calls.items())
 
-        events: list[str] = [
-            json.dumps(
-                {
-                    "type": "response.created",
-                    "response": {"id": resp_id, "object": "response", "status": "in_progress", "model": model},
-                }
-            ),
-            json.dumps({"type": "response.in_progress", "response": {"id": resp_id}}),
-        ]
+        events: list[str] = []
 
         # reasoning
         if merged_reasoning:
