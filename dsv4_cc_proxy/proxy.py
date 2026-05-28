@@ -1020,16 +1020,23 @@ async def proxy_responses(request):
 
     import uuid
 
-    async def _collect_and_convert():
-        """先立即发出响应头事件，再收集上游 chunks，最后补充剩余事件。"""
+    async def _stream_convert():
+        """逐 chunk 流式转换：Chat SSE → Responses SSE（参考 ai-adapter 的 ChatStreamToResponsesTranslator）。"""
         resp_id = f"resp_{uuid.uuid4().hex[:24]}"
-        # 立即发出 response.created + in_progress 防止 Codex 超时
-        model_hint = chat_req.get("model", "")
-        yield f"data: {json.dumps({'type': 'response.created', 'response': {'id': resp_id, 'object': 'response', 'status': 'in_progress', 'model': model_hint}})}\n".encode()
-        yield f"data: {json.dumps({'type': 'response.in_progress', 'response': {'id': resp_id}})}\n".encode()
+        msg_id = f"msg_{resp_id[-8:]}"
 
-        chunks: list[dict] = []
+        started = False
+        msg_item_added = False
+        content_part_added = False
+        finished = False
+        current_text = ""
+        current_reasoning = ""
+        tool_calls: dict[int, dict] = {}  # index → {id, name, args}
         buffer = ""
+
+        def _emit(s: str) -> bytes:
+            return f"data: {s}\n".encode()
+
         try:
             async for data in upstream_resp.aiter_bytes():
                 text = data.decode("utf-8", errors="replace")
@@ -1037,187 +1044,351 @@ async def proxy_responses(request):
                 while "\n" in buffer:
                     line, buffer = buffer.split("\n", 1)
                     stripped = line.strip()
-                    if stripped.startswith("data: ") and stripped != "data: [DONE]":
-                        try:
-                            chunks.append(json.loads(stripped[6:]))
-                        except json.JSONDecodeError:
-                            pass
+                    if not stripped.startswith("data: ") or stripped == "data: [DONE]":
+                        continue
+                    try:
+                        chunk = json.loads(stripped[6:])
+                    except json.JSONDecodeError:
+                        continue
+
+                    choices = chunk.get("choices")
+                    if not choices:
+                        continue
+                    choice = choices[0]
+                    delta = choice.get("delta", {})
+                    model = chunk.get("model", "")
+
+                    # 首次 chunk：emit response.created + response.in_progress
+                    if not started:
+                        started = True
+                        yield _emit(
+                            json.dumps(
+                                {
+                                    "type": "response.created",
+                                    "response": {
+                                        "id": resp_id,
+                                        "object": "response",
+                                        "status": "in_progress",
+                                        "model": model,
+                                    },
+                                }
+                            )
+                        )
+                        yield _emit(json.dumps({"type": "response.in_progress", "response": {"id": resp_id}}))
+
+                    # 处理 reasoning_content
+                    if delta.get("reasoning_content"):
+                        rc = delta["reasoning_content"]
+                        if not current_reasoning:
+                            rs_id = f"rs_{resp_id[-8:]}"
+                            yield _emit(
+                                json.dumps(
+                                    {
+                                        "type": "response.output_item.added",
+                                        "output_index": 0,
+                                        "item": {"id": rs_id, "type": "reasoning", "status": "in_progress"},
+                                    }
+                                )
+                            )
+                            yield _emit(
+                                json.dumps(
+                                    {
+                                        "type": "response.content_part.added",
+                                        "item_id": rs_id,
+                                        "output_index": 0,
+                                        "part": {"type": "summary_text", "text": ""},
+                                    }
+                                )
+                            )
+                        current_reasoning += rc
+                        yield _emit(
+                            json.dumps(
+                                {
+                                    "type": "response.output_text.delta",
+                                    "item_id": f"rs_{resp_id[-8:]}",
+                                    "output_index": 0,
+                                    "delta": rc,
+                                }
+                            )
+                        )
+
+                    # 处理 tool_calls
+                    for tc in delta.get("tool_calls", []):
+                        idx = tc.get("index", 0)
+                        tc_id = tc.get("id")
+                        func = tc.get("function", {})
+                        if tc_id is not None:
+                            item_id = f"fc_{resp_id[-8:]}_{idx}"
+                            tool_calls[idx] = {
+                                "id": tc_id,
+                                "name": func.get("name", ""),
+                                "args": func.get("arguments", ""),
+                                "item_id": item_id,
+                            }
+                            yield _emit(
+                                json.dumps(
+                                    {
+                                        "type": "response.output_item.added",
+                                        "output_index": idx,
+                                        "item": {
+                                            "id": item_id,
+                                            "type": "function_call",
+                                            "call_id": tc_id,
+                                            "name": func.get("name", ""),
+                                            "arguments": "",
+                                            "status": "in_progress",
+                                        },
+                                    }
+                                )
+                            )
+                        else:
+                            tc = tool_calls.get(idx)
+                            if tc:
+                                args_delta = func.get("arguments", "")
+                                tc["args"] += args_delta
+                                yield _emit(
+                                    json.dumps(
+                                        {
+                                            "type": "response.function_call_arguments.delta",
+                                            "item_id": tc["item_id"],
+                                            "output_index": idx,
+                                            "delta": args_delta,
+                                        }
+                                    )
+                                )
+
+                    # 处理 text content
+                    if delta.get("content"):
+                        ct = delta["content"]
+                        if not msg_item_added:
+                            msg_item_added = True
+                            yield _emit(
+                                json.dumps(
+                                    {
+                                        "type": "response.output_item.added",
+                                        "output_index": 0,
+                                        "item": {
+                                            "id": msg_id,
+                                            "type": "message",
+                                            "role": "assistant",
+                                            "status": "in_progress",
+                                        },
+                                    }
+                                )
+                            )
+                        if not content_part_added:
+                            content_part_added = True
+                            yield _emit(
+                                json.dumps(
+                                    {
+                                        "type": "response.content_part.added",
+                                        "item_id": msg_id,
+                                        "output_index": 0,
+                                        "part": {"type": "output_text", "text": ""},
+                                    }
+                                )
+                            )
+                        current_text += ct
+                        yield _emit(
+                            json.dumps(
+                                {
+                                    "type": "response.output_text.delta",
+                                    "item_id": msg_id,
+                                    "output_index": 0,
+                                    "delta": ct,
+                                }
+                            )
+                        )
+
+                    # 处理 finish_reason
+                    fr = choice.get("finish_reason")
+                    if fr in ("stop", "tool_calls", "length"):
+                        finished = True
+                        events = []
+
+                        # reasoning done
+                        if current_reasoning:
+                            rs_id = f"rs_{resp_id[-8:]}"
+                            events += [
+                                json.dumps(
+                                    {
+                                        "type": "response.output_text.done",
+                                        "item_id": rs_id,
+                                        "output_index": 0,
+                                        "text": current_reasoning,
+                                    }
+                                ),
+                                json.dumps(
+                                    {
+                                        "type": "response.content_part.done",
+                                        "item_id": rs_id,
+                                        "output_index": 0,
+                                        "part": {"type": "summary_text", "text": current_reasoning},
+                                    }
+                                ),
+                                json.dumps(
+                                    {
+                                        "type": "response.output_item.done",
+                                        "item": {"id": rs_id, "type": "reasoning", "status": "completed"},
+                                        "output_index": 0,
+                                    }
+                                ),
+                            ]
+
+                        # text message done
+                        if msg_item_added:
+                            events += [
+                                json.dumps(
+                                    {
+                                        "type": "response.output_text.done",
+                                        "item_id": msg_id,
+                                        "output_index": 0,
+                                        "text": "",
+                                    }
+                                ),
+                                json.dumps(
+                                    {
+                                        "type": "response.content_part.done",
+                                        "item_id": msg_id,
+                                        "output_index": 0,
+                                        "part": {"type": "output_text", "text": ""},
+                                    }
+                                ),
+                                json.dumps(
+                                    {
+                                        "type": "response.output_item.done",
+                                        "item": {
+                                            "id": msg_id,
+                                            "type": "message",
+                                            "role": "assistant",
+                                            "status": "completed",
+                                        },
+                                        "output_index": 0,
+                                    }
+                                ),
+                            ]
+
+                        # tool calls done
+                        for tc in tool_calls.values():
+                            events += [
+                                json.dumps(
+                                    {
+                                        "type": "response.function_call_arguments.done",
+                                        "item_id": tc["item_id"],
+                                        "output_index": 0,
+                                        "arguments": tc["args"],
+                                    }
+                                ),
+                                json.dumps(
+                                    {
+                                        "type": "response.output_item.done",
+                                        "item": {
+                                            "id": tc["item_id"],
+                                            "type": "function_call",
+                                            "call_id": tc["id"],
+                                            "name": tc["name"],
+                                            "arguments": tc["args"],
+                                            "status": "completed",
+                                        },
+                                        "output_index": 0,
+                                    }
+                                ),
+                            ]
+
+                        status = "completed" if fr != "length" else "incomplete"
+                        events.append(
+                            json.dumps(
+                                {
+                                    "type": "response.completed",
+                                    "response": {"id": resp_id, "object": "response", "status": status, "model": model},
+                                }
+                            )
+                        )
+
+                        logger.info(
+                            "[CODEX-SSE] finished — text=%d chars, tools=%d", len(current_text), len(tool_calls)
+                        )
+
+                        for ev in events:
+                            yield _emit(ev)
+                        yield b"data: [DONE]\n"
+
+            # 流结束时补发 response.completed（上游没发 finish_reason 的情况）
+            if not finished and started:
+                events = []
+                if current_reasoning:
+                    rs_id = f"rs_{resp_id[-8:]}"
+                    events += [
+                        json.dumps(
+                            {
+                                "type": "response.output_text.done",
+                                "item_id": rs_id,
+                                "output_index": 0,
+                                "text": current_reasoning,
+                            }
+                        ),
+                        json.dumps(
+                            {
+                                "type": "response.content_part.done",
+                                "item_id": rs_id,
+                                "output_index": 0,
+                                "part": {"type": "summary_text", "text": current_reasoning},
+                            }
+                        ),
+                        json.dumps(
+                            {
+                                "type": "response.output_item.done",
+                                "item": {"id": rs_id, "type": "reasoning", "status": "completed"},
+                                "output_index": 0,
+                            }
+                        ),
+                    ]
+                if msg_item_added:
+                    events += [
+                        json.dumps(
+                            {"type": "response.output_text.done", "item_id": msg_id, "output_index": 0, "text": ""}
+                        ),
+                        json.dumps(
+                            {
+                                "type": "response.content_part.done",
+                                "item_id": msg_id,
+                                "output_index": 0,
+                                "part": {"type": "output_text", "text": ""},
+                            }
+                        ),
+                        json.dumps(
+                            {
+                                "type": "response.output_item.done",
+                                "item": {"id": msg_id, "type": "message", "role": "assistant", "status": "completed"},
+                                "output_index": 0,
+                            }
+                        ),
+                    ]
+                events.append(
+                    json.dumps(
+                        {
+                            "type": "response.completed",
+                            "response": {
+                                "id": resp_id,
+                                "object": "response",
+                                "status": "completed",
+                                "model": chat_req.get("model", ""),
+                            },
+                        }
+                    )
+                )
+                logger.info("[CODEX-SSE] stream-ended without finish_reason — forced complete")
+                for ev in events:
+                    yield _emit(ev)
+                yield b"data: [DONE]\n"
+
         except Exception:
             logger.exception("Codex SSE stream error")
         finally:
             await upstream_resp.aclose()
 
-        if not chunks:
-            return
-
-        merged_content = ""
-        merged_reasoning = ""
-        merged_tool_calls: dict[int, dict] = {}
-        model = chunks[0].get("model", "")
-
-        for chunk in chunks:
-            delta = chunk.get("choices", [{}])[0].get("delta", {})
-            if delta.get("content"):
-                merged_content += delta["content"]
-            if delta.get("reasoning_content"):
-                merged_reasoning += delta["reasoning_content"]
-            for tc in delta.get("tool_calls", []):
-                idx = tc.get("index", 0)
-                tc_id = tc.get("id")
-                func = tc.get("function", {})
-                if tc_id is not None:
-                    merged_tool_calls[idx] = {
-                        "id": tc_id,
-                        "function": {"name": func.get("name", ""), "arguments": func.get("arguments", "")},
-                    }
-                elif idx in merged_tool_calls:
-                    merged_tool_calls[idx]["function"]["arguments"] += func.get("arguments", "")
-
-        msg_id = f"msg_{resp_id[-8:]}"
-        tool_items = list(merged_tool_calls.items())
-
-        events: list[str] = []
-
-        # reasoning
-        if merged_reasoning:
-            rs_id = f"rs_{resp_id[-8:]}"
-            events += [
-                json.dumps(
-                    {
-                        "type": "response.output_item.added",
-                        "output_index": 0,
-                        "item": {"id": rs_id, "type": "reasoning", "status": "in_progress"},
-                    }
-                ),
-                json.dumps(
-                    {
-                        "type": "response.content_part.added",
-                        "item_id": rs_id,
-                        "output_index": 0,
-                        "part": {"type": "summary_text", "text": ""},
-                    }
-                ),
-                json.dumps(
-                    {
-                        "type": "response.output_text.delta",
-                        "item_id": rs_id,
-                        "output_index": 0,
-                        "delta": merged_reasoning,
-                    }
-                ),
-                json.dumps(
-                    {"type": "response.output_text.done", "item_id": rs_id, "output_index": 0, "text": merged_reasoning}
-                ),
-                json.dumps(
-                    {
-                        "type": "response.content_part.done",
-                        "item_id": rs_id,
-                        "output_index": 0,
-                        "part": {"type": "summary_text", "text": merged_reasoning},
-                    }
-                ),
-                json.dumps(
-                    {
-                        "type": "response.output_item.done",
-                        "item": {"id": rs_id, "type": "reasoning", "status": "completed"},
-                        "output_index": 0,
-                    }
-                ),
-            ]
-
-        # text message
-        if merged_content or not tool_items:
-            events += [
-                json.dumps(
-                    {
-                        "type": "response.output_item.added",
-                        "output_index": 0,
-                        "item": {"id": msg_id, "type": "message", "role": "assistant", "status": "in_progress"},
-                    }
-                ),
-                json.dumps(
-                    {
-                        "type": "response.content_part.added",
-                        "item_id": msg_id,
-                        "output_index": 0,
-                        "part": {"type": "output_text", "text": ""},
-                    }
-                ),
-            ]
-            if merged_content:
-                for i in range(0, len(merged_content), 100):
-                    events.append(
-                        json.dumps(
-                            {
-                                "type": "response.output_text.delta",
-                                "item_id": msg_id,
-                                "output_index": 0,
-                                "delta": merged_content[i : i + 100],
-                            }
-                        )
-                    )
-            events += [
-                json.dumps({"type": "response.output_text.done", "item_id": msg_id, "output_index": 0, "text": ""}),
-                json.dumps(
-                    {
-                        "type": "response.content_part.done",
-                        "item_id": msg_id,
-                        "output_index": 0,
-                        "part": {"type": "output_text", "text": ""},
-                    }
-                ),
-                json.dumps(
-                    {
-                        "type": "response.output_item.done",
-                        "item": {"id": msg_id, "type": "message", "role": "assistant", "status": "completed"},
-                        "output_index": 0,
-                    }
-                ),
-            ]
-
-        # tool calls
-        for idx, tc in tool_items:
-            fc_id = f"fc_{resp_id[-8:]}_{idx}"
-            events.append(
-                json.dumps(
-                    {
-                        "type": "response.output_item.added",
-                        "output_index": idx,
-                        "item": {
-                            "id": fc_id,
-                            "type": "function_call",
-                            "call_id": tc["id"],
-                            "name": tc["function"]["name"],
-                            "arguments": tc["function"]["arguments"],
-                            "status": "completed",
-                        },
-                    }
-                )
-            )
-
-        events.append(
-            json.dumps(
-                {
-                    "type": "response.completed",
-                    "response": {"id": resp_id, "object": "response", "status": "completed", "model": model},
-                }
-            )
-        )
-
-        logger.info(
-            "[CODEX-SSE] %d chunks → %d events (text=%d chars, tools=%d)",
-            len(chunks),
-            len(events),
-            len(merged_content),
-            len(tool_items),
-        )
-
-        for ev in events:
-            yield f"data: {ev}\n".encode("utf-8")
-        yield b"data: [DONE]\n"
-
     return StreamingResponse(
-        _collect_and_convert(),
+        _stream_convert(),
         status_code=upstream_resp.status_code,
         headers=_build_response_headers(upstream_resp, is_sse=True),
     )
