@@ -291,21 +291,11 @@ def main():
             return
 
         _init_tags()
-        lines = []
-        for ts, msg, color in _log_buffer:
-            lines.append(ts)
-            lines.append(msg + "\n")
-
         log_text.config(state="normal")
-        log_text.insert("end", "".join(lines), ("ts",))
-        pos = log_text.index("end-1c linestart")
         for ts, msg, color in _log_buffer:
-            if color != "black":
-                start = log_text.index(f"{pos}+{len(ts)}c")
-                end = log_text.index(f"{start}+{len(msg)}c")
-                log_text.tag_add(color, start, end)
-            pos = log_text.index(f"{pos}+{len(ts) + len(msg) + 1}c")
-
+            tag = (color,) if color != "black" else ()
+            log_text.insert("end", ts, ("ts",))
+            log_text.insert("end", msg + "\n", tag)
         _log_buffer.clear()
 
         total = int(log_text.index("end-1c").split(".")[0])
