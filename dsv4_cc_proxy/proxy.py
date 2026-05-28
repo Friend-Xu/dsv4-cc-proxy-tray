@@ -1035,7 +1035,7 @@ async def proxy_responses(request):
         buffer = ""
 
         def _emit(s: str) -> bytes:
-            return f"data: {s}\n".encode()
+            return f"data: {s}\n\n".encode()
 
         try:
             async for data in upstream_resp.aiter_bytes():
@@ -1311,7 +1311,7 @@ async def proxy_responses(request):
 
                         for ev in events:
                             yield _emit(ev)
-                        yield b"data: [DONE]\n"
+                        yield b"data: [DONE]\n\n"
 
             # 流结束时补发 response.completed（上游没发 finish_reason 的情况）
             if not finished and started:
@@ -1380,7 +1380,7 @@ async def proxy_responses(request):
                 logger.info("[CODEX-SSE] stream-ended without finish_reason — forced complete")
                 for ev in events:
                     yield _emit(ev)
-                yield b"data: [DONE]\n"
+                yield b"data: [DONE]\n\n"
 
         except Exception:
             logger.exception("Codex SSE stream error")
