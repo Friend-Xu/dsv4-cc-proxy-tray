@@ -282,6 +282,8 @@ def main():
         log_text.tag_config("ts", foreground="gray")
         for level, c in _COLOR_TAGS.items():
             log_text.tag_config(c, foreground=c)
+        for route, c in _ROUTE_COLORS.items():
+            log_text.tag_config(c, foreground=c)
         _tags_inited = True
 
     def _flush_log():
