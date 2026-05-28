@@ -1104,6 +1104,7 @@ async def proxy_responses(request):
                                         "type": "response.content_part.added",
                                         "item_id": rs_id,
                                         "output_index": 0,
+                                        "content_index": 0,
                                         "part": {"type": "summary_text", "text": ""},
                                     }
                                 )
@@ -1115,6 +1116,7 @@ async def proxy_responses(request):
                                     "type": "response.output_text.delta",
                                     "item_id": f"rs_{resp_id[-8:]}",
                                     "output_index": 0,
+                                    "content_index": 0,
                                     "delta": rc,
                                 }
                             )
@@ -1192,6 +1194,7 @@ async def proxy_responses(request):
                                         "type": "response.content_part.added",
                                         "item_id": msg_id,
                                         "output_index": 0,
+                                        "content_index": 0,
                                         "part": {"type": "output_text", "text": ""},
                                     }
                                 )
@@ -1203,6 +1206,7 @@ async def proxy_responses(request):
                                     "type": "response.output_text.delta",
                                     "item_id": msg_id,
                                     "output_index": 0,
+                                    "content_index": 0,
                                     "delta": ct,
                                 }
                             )
