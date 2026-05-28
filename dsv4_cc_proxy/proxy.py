@@ -20,6 +20,7 @@ import logging.handlers
 import os
 import sys
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 import httpx
 from starlette.applications import Starlette
@@ -1034,8 +1035,15 @@ async def proxy_responses(request):
         tool_calls: dict[int, dict] = {}  # index → {id, name, args}
         buffer = ""
 
+        _dump_path = Path.home() / ".dsv4-cc-proxy-sse-dump.txt"
+
+        def _dump(data: bytes) -> bytes:
+            with open(_dump_path, "ab") as f:
+                f.write(data)
+            return data
+
         def _emit(s: str) -> bytes:
-            return f"data: {s}\n\n".encode()
+            return _dump(f"data: {s}\n\n".encode())
 
         try:
             async for data in upstream_resp.aiter_bytes():
@@ -1311,7 +1319,7 @@ async def proxy_responses(request):
 
                         for ev in events:
                             yield _emit(ev)
-                        yield b"data: [DONE]\n\n"
+                        yield _dump(b"data: [DONE]\n\n")
 
             # 流结束时补发 response.completed（上游没发 finish_reason 的情况）
             if not finished and started:
@@ -1380,7 +1388,7 @@ async def proxy_responses(request):
                 logger.info("[CODEX-SSE] stream-ended without finish_reason — forced complete")
                 for ev in events:
                     yield _emit(ev)
-                yield b"data: [DONE]\n\n"
+                yield _dump(b"data: [DONE]\n\n")
 
         except Exception:
             logger.exception("Codex SSE stream error")
