@@ -719,9 +719,12 @@ def _chat_to_responses_sse(line: str, state: dict) -> str | None:
         state["msg_id"] = f"msg_{resp_id[-8:]}"
         return "data: " + "\ndata: ".join(
             [
-                json.dumps({"type": "response.created",
-                            "response": {"id": resp_id, "object": "response",
-                                         "status": "in_progress", "model": model}}),
+                json.dumps(
+                    {
+                        "type": "response.created",
+                        "response": {"id": resp_id, "object": "response", "status": "in_progress", "model": model},
+                    }
+                ),
                 json.dumps({"type": "response.in_progress", "response": {"id": resp_id}}),
             ]
         )
@@ -839,47 +842,104 @@ def _chat_to_responses_sse(line: str, state: dict) -> str | None:
             # 直接补发 output_item.added 确保 Codex 收到完整的输出。
             item_id = state.get("msg_id", f"msg_{resp_id[-8:]}")
             events += [
-                json.dumps({"type": "response.output_item.added", "output_index": 0,
-                            "item": {"id": item_id, "type": "message", "role": "assistant",
-                                     "status": "in_progress"}}),
-                json.dumps({"type": "response.content_part.added", "item_id": item_id,
-                            "output_index": 0, "part": {"type": "output_text", "text": ""}}),
-                json.dumps({"type": "response.output_text.done", "item_id": item_id,
-                            "output_index": 0, "text": ""}),
-                json.dumps({"type": "response.content_part.done", "item_id": item_id,
-                            "output_index": 0, "part": {"type": "output_text", "text": ""}}),
-                json.dumps({"type": "response.output_item.done",
-                            "item": {"id": item_id, "type": "message", "role": "assistant",
-                                     "status": "completed"}, "output_index": 0}),
+                json.dumps(
+                    {
+                        "type": "response.output_item.added",
+                        "output_index": 0,
+                        "item": {"id": item_id, "type": "message", "role": "assistant", "status": "in_progress"},
+                    }
+                ),
+                json.dumps(
+                    {
+                        "type": "response.content_part.added",
+                        "item_id": item_id,
+                        "output_index": 0,
+                        "part": {"type": "output_text", "text": ""},
+                    }
+                ),
+                json.dumps({"type": "response.output_text.done", "item_id": item_id, "output_index": 0, "text": ""}),
+                json.dumps(
+                    {
+                        "type": "response.content_part.done",
+                        "item_id": item_id,
+                        "output_index": 0,
+                        "part": {"type": "output_text", "text": ""},
+                    }
+                ),
+                json.dumps(
+                    {
+                        "type": "response.output_item.done",
+                        "item": {"id": item_id, "type": "message", "role": "assistant", "status": "completed"},
+                        "output_index": 0,
+                    }
+                ),
             ]
         elif finish_reason == "stop" and not state.get("tool_calls"):
             item_id = state.get("msg_id", f"msg_{resp_id[-8:]}")
             events += [
                 json.dumps({"type": "response.output_text.done", "item_id": item_id, "output_index": 0, "text": ""}),
-                json.dumps({"type": "response.content_part.done", "item_id": item_id, "output_index": 0,
-                            "part": {"type": "output_text", "text": ""}}),
-                json.dumps({"type": "response.output_item.done",
-                            "item": {"id": item_id, "type": "message", "role": "assistant",
-                                     "status": "completed"}, "output_index": 0}),
+                json.dumps(
+                    {
+                        "type": "response.content_part.done",
+                        "item_id": item_id,
+                        "output_index": 0,
+                        "part": {"type": "output_text", "text": ""},
+                    }
+                ),
+                json.dumps(
+                    {
+                        "type": "response.output_item.done",
+                        "item": {"id": item_id, "type": "message", "role": "assistant", "status": "completed"},
+                        "output_index": 0,
+                    }
+                ),
             ]
         for tc in state.get("tool_calls", {}).values():
             events += [
-                json.dumps({"type": "response.function_call_arguments.done",
-                            "item_id": tc["item_id"], "output_index": 0, "arguments": tc.get("args", "")}),
-                json.dumps({"type": "response.output_item.done",
-                            "item": {"id": tc["item_id"], "type": "function_call", "call_id": tc["id"],
-                                     "name": tc["name"], "arguments": tc.get("args", ""),
-                                     "status": "completed"}, "output_index": 0}),
+                json.dumps(
+                    {
+                        "type": "response.function_call_arguments.done",
+                        "item_id": tc["item_id"],
+                        "output_index": 0,
+                        "arguments": tc.get("args", ""),
+                    }
+                ),
+                json.dumps(
+                    {
+                        "type": "response.output_item.done",
+                        "item": {
+                            "id": tc["item_id"],
+                            "type": "function_call",
+                            "call_id": tc["id"],
+                            "name": tc["name"],
+                            "arguments": tc.get("args", ""),
+                            "status": "completed",
+                        },
+                        "output_index": 0,
+                    }
+                ),
             ]
-        events.append(json.dumps({"type": "response.completed",
-                                  "response": {"id": resp_id, "object": "response",
-                                               "status": "completed", "model": model}}))
+        events.append(
+            json.dumps(
+                {
+                    "type": "response.completed",
+                    "response": {"id": resp_id, "object": "response", "status": "completed", "model": model},
+                }
+            )
+        )
         return "data: " + "\ndata: ".join(events) + "\ndata: [DONE]"
     elif finish_reason == "length":
         state["finished"] = True
-        payload = json.dumps({"type": "response.completed",
-                              "response": {"id": resp_id, "status": "incomplete",
-                                           "incomplete_details": {"reason": "max_output_tokens"}}})
+        payload = json.dumps(
+            {
+                "type": "response.completed",
+                "response": {
+                    "id": resp_id,
+                    "status": "incomplete",
+                    "incomplete_details": {"reason": "max_output_tokens"},
+                },
+            }
+        )
         return f"data: {payload}\ndata: [DONE]"
 
     return None
@@ -960,31 +1020,207 @@ async def proxy_responses(request):
 
     import uuid
 
-    resp_id = f"resp_{uuid.uuid4().hex[:24]}"
-
-    async def _responses_sse_stream():
-        sse_state: dict = {"resp_id": resp_id}
+    async def _collect_and_convert():
+        """收集所有 Chat SSE chunks，合并为完整 response，一次性转为 Responses SSE。"""
+        chunks: list[dict] = []
         buffer = ""
         try:
-            async for chunk in upstream_resp.aiter_bytes():
-                text = chunk.decode("utf-8", errors="replace")
+            async for data in upstream_resp.aiter_bytes():
+                text = data.decode("utf-8", errors="replace")
                 buffer += text
                 while "\n" in buffer:
                     line, buffer = buffer.split("\n", 1)
-                    result = _chat_to_responses_sse(line, sse_state)
-                    if result is not None:
-                        yield (result + "\n").encode("utf-8")
-            if buffer.strip():
-                result = _chat_to_responses_sse(buffer, sse_state)
-                if result is not None:
-                    yield (result + "\n").encode("utf-8")
+                    stripped = line.strip()
+                    if stripped.startswith("data: ") and stripped != "data: [DONE]":
+                        try:
+                            chunks.append(json.loads(stripped[6:]))
+                        except json.JSONDecodeError:
+                            pass
         except Exception:
             logger.exception("Codex SSE stream error")
         finally:
             await upstream_resp.aclose()
 
+        if not chunks:
+            return
+
+        merged_content = ""
+        merged_reasoning = ""
+        merged_tool_calls: dict[int, dict] = {}
+        model = chunks[0].get("model", "")
+
+        for chunk in chunks:
+            delta = chunk.get("choices", [{}])[0].get("delta", {})
+            if delta.get("content"):
+                merged_content += delta["content"]
+            if delta.get("reasoning_content"):
+                merged_reasoning += delta["reasoning_content"]
+            for tc in delta.get("tool_calls", []):
+                idx = tc.get("index", 0)
+                tc_id = tc.get("id")
+                func = tc.get("function", {})
+                if tc_id is not None:
+                    merged_tool_calls[idx] = {
+                        "id": tc_id,
+                        "function": {"name": func.get("name", ""), "arguments": func.get("arguments", "")},
+                    }
+                elif idx in merged_tool_calls:
+                    merged_tool_calls[idx]["function"]["arguments"] += func.get("arguments", "")
+
+        resp_id = f"resp_{uuid.uuid4().hex[:24]}"
+        msg_id = f"msg_{resp_id[-8:]}"
+        tool_items = list(merged_tool_calls.items())
+
+        events: list[str] = [
+            json.dumps(
+                {
+                    "type": "response.created",
+                    "response": {"id": resp_id, "object": "response", "status": "in_progress", "model": model},
+                }
+            ),
+            json.dumps({"type": "response.in_progress", "response": {"id": resp_id}}),
+        ]
+
+        # reasoning
+        if merged_reasoning:
+            rs_id = f"rs_{resp_id[-8:]}"
+            events += [
+                json.dumps(
+                    {
+                        "type": "response.output_item.added",
+                        "output_index": 0,
+                        "item": {"id": rs_id, "type": "reasoning", "status": "in_progress"},
+                    }
+                ),
+                json.dumps(
+                    {
+                        "type": "response.content_part.added",
+                        "item_id": rs_id,
+                        "output_index": 0,
+                        "part": {"type": "summary_text", "text": ""},
+                    }
+                ),
+                json.dumps(
+                    {
+                        "type": "response.output_text.delta",
+                        "item_id": rs_id,
+                        "output_index": 0,
+                        "delta": merged_reasoning,
+                    }
+                ),
+                json.dumps(
+                    {"type": "response.output_text.done", "item_id": rs_id, "output_index": 0, "text": merged_reasoning}
+                ),
+                json.dumps(
+                    {
+                        "type": "response.content_part.done",
+                        "item_id": rs_id,
+                        "output_index": 0,
+                        "part": {"type": "summary_text", "text": merged_reasoning},
+                    }
+                ),
+                json.dumps(
+                    {
+                        "type": "response.output_item.done",
+                        "item": {"id": rs_id, "type": "reasoning", "status": "completed"},
+                        "output_index": 0,
+                    }
+                ),
+            ]
+
+        # text message
+        if merged_content or not tool_items:
+            events += [
+                json.dumps(
+                    {
+                        "type": "response.output_item.added",
+                        "output_index": 0,
+                        "item": {"id": msg_id, "type": "message", "role": "assistant", "status": "in_progress"},
+                    }
+                ),
+                json.dumps(
+                    {
+                        "type": "response.content_part.added",
+                        "item_id": msg_id,
+                        "output_index": 0,
+                        "part": {"type": "output_text", "text": ""},
+                    }
+                ),
+            ]
+            if merged_content:
+                for i in range(0, len(merged_content), 100):
+                    events.append(
+                        json.dumps(
+                            {
+                                "type": "response.output_text.delta",
+                                "item_id": msg_id,
+                                "output_index": 0,
+                                "delta": merged_content[i : i + 100],
+                            }
+                        )
+                    )
+            events += [
+                json.dumps({"type": "response.output_text.done", "item_id": msg_id, "output_index": 0, "text": ""}),
+                json.dumps(
+                    {
+                        "type": "response.content_part.done",
+                        "item_id": msg_id,
+                        "output_index": 0,
+                        "part": {"type": "output_text", "text": ""},
+                    }
+                ),
+                json.dumps(
+                    {
+                        "type": "response.output_item.done",
+                        "item": {"id": msg_id, "type": "message", "role": "assistant", "status": "completed"},
+                        "output_index": 0,
+                    }
+                ),
+            ]
+
+        # tool calls
+        for idx, tc in tool_items:
+            fc_id = f"fc_{resp_id[-8:]}_{idx}"
+            events.append(
+                json.dumps(
+                    {
+                        "type": "response.output_item.added",
+                        "output_index": idx,
+                        "item": {
+                            "id": fc_id,
+                            "type": "function_call",
+                            "call_id": tc["id"],
+                            "name": tc["function"]["name"],
+                            "arguments": tc["function"]["arguments"],
+                            "status": "completed",
+                        },
+                    }
+                )
+            )
+
+        events.append(
+            json.dumps(
+                {
+                    "type": "response.completed",
+                    "response": {"id": resp_id, "object": "response", "status": "completed", "model": model},
+                }
+            )
+        )
+
+        logger.info(
+            "[CODEX-SSE] %d chunks → %d events (text=%d chars, tools=%d)",
+            len(chunks),
+            len(events),
+            len(merged_content),
+            len(tool_items),
+        )
+
+        for ev in events:
+            yield f"data: {ev}\n".encode("utf-8")
+        yield b"data: [DONE]\n"
+
     return StreamingResponse(
-        _responses_sse_stream(),
+        _collect_and_convert(),
         status_code=upstream_resp.status_code,
         headers=_build_response_headers(upstream_resp, is_sse=True),
     )
