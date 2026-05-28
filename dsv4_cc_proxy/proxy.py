@@ -719,12 +719,9 @@ def _chat_to_responses_sse(line: str, state: dict) -> str | None:
         state["msg_id"] = f"msg_{resp_id[-8:]}"
         return "data: " + "\ndata: ".join(
             [
-                json.dumps(
-                    {
-                        "type": "response.created",
-                        "response": {"id": resp_id, "object": "response", "status": "in_progress", "model": model},
-                    }
-                ),
+                json.dumps({"type": "response.created",
+                            "response": {"id": resp_id, "object": "response",
+                                         "status": "in_progress", "model": model}}),
                 json.dumps({"type": "response.in_progress", "response": {"id": resp_id}}),
             ]
         )
@@ -837,72 +834,52 @@ def _chat_to_responses_sse(line: str, state: dict) -> str | None:
     if finish_reason in ("stop", "tool_calls"):
         state["finished"] = True
         events = []
-        if finish_reason == "stop" and not state.get("tool_calls"):
+        if not state.get("tool_calls") and not state.get("content_started"):
+            # DeepSeek 可能不在 delta.content 中发文本（role chunk 等），
+            # 直接补发 output_item.added 确保 Codex 收到完整的输出。
+            item_id = state.get("msg_id", f"msg_{resp_id[-8:]}")
+            events += [
+                json.dumps({"type": "response.output_item.added", "output_index": 0,
+                            "item": {"id": item_id, "type": "message", "role": "assistant",
+                                     "status": "in_progress"}}),
+                json.dumps({"type": "response.content_part.added", "item_id": item_id,
+                            "output_index": 0, "part": {"type": "output_text", "text": ""}}),
+                json.dumps({"type": "response.output_text.done", "item_id": item_id,
+                            "output_index": 0, "text": ""}),
+                json.dumps({"type": "response.content_part.done", "item_id": item_id,
+                            "output_index": 0, "part": {"type": "output_text", "text": ""}}),
+                json.dumps({"type": "response.output_item.done",
+                            "item": {"id": item_id, "type": "message", "role": "assistant",
+                                     "status": "completed"}, "output_index": 0}),
+            ]
+        elif finish_reason == "stop" and not state.get("tool_calls"):
             item_id = state.get("msg_id", f"msg_{resp_id[-8:]}")
             events += [
                 json.dumps({"type": "response.output_text.done", "item_id": item_id, "output_index": 0, "text": ""}),
-                json.dumps(
-                    {
-                        "type": "response.content_part.done",
-                        "item_id": item_id,
-                        "output_index": 0,
-                        "part": {"type": "output_text", "text": ""},
-                    }
-                ),
-                json.dumps(
-                    {
-                        "type": "response.output_item.done",
-                        "item": {"id": item_id, "type": "message", "role": "assistant", "status": "completed"},
-                        "output_index": 0,
-                    }
-                ),
+                json.dumps({"type": "response.content_part.done", "item_id": item_id, "output_index": 0,
+                            "part": {"type": "output_text", "text": ""}}),
+                json.dumps({"type": "response.output_item.done",
+                            "item": {"id": item_id, "type": "message", "role": "assistant",
+                                     "status": "completed"}, "output_index": 0}),
             ]
         for tc in state.get("tool_calls", {}).values():
             events += [
-                json.dumps(
-                    {
-                        "type": "response.function_call_arguments.done",
-                        "item_id": tc["item_id"],
-                        "output_index": 0,
-                        "arguments": tc.get("args", ""),
-                    }
-                ),
-                json.dumps(
-                    {
-                        "type": "response.output_item.done",
-                        "item": {
-                            "id": tc["item_id"],
-                            "type": "function_call",
-                            "call_id": tc["id"],
-                            "name": tc["name"],
-                            "arguments": tc.get("args", ""),
-                            "status": "completed",
-                        },
-                        "output_index": 0,
-                    }
-                ),
+                json.dumps({"type": "response.function_call_arguments.done",
+                            "item_id": tc["item_id"], "output_index": 0, "arguments": tc.get("args", "")}),
+                json.dumps({"type": "response.output_item.done",
+                            "item": {"id": tc["item_id"], "type": "function_call", "call_id": tc["id"],
+                                     "name": tc["name"], "arguments": tc.get("args", ""),
+                                     "status": "completed"}, "output_index": 0}),
             ]
-        events.append(
-            json.dumps(
-                {
-                    "type": "response.completed",
-                    "response": {"id": resp_id, "object": "response", "status": "completed", "model": model},
-                }
-            )
-        )
+        events.append(json.dumps({"type": "response.completed",
+                                  "response": {"id": resp_id, "object": "response",
+                                               "status": "completed", "model": model}}))
         return "data: " + "\ndata: ".join(events) + "\ndata: [DONE]"
     elif finish_reason == "length":
         state["finished"] = True
-        payload = json.dumps(
-            {
-                "type": "response.completed",
-                "response": {
-                    "id": resp_id,
-                    "status": "incomplete",
-                    "incomplete_details": {"reason": "max_output_tokens"},
-                },
-            }
-        )
+        payload = json.dumps({"type": "response.completed",
+                              "response": {"id": resp_id, "status": "incomplete",
+                                           "incomplete_details": {"reason": "max_output_tokens"}}})
         return f"data: {payload}\ndata: [DONE]"
 
     return None
