@@ -31,6 +31,7 @@ from dsv4_cc_proxy._version import VERSION
 # ---- 配置 ----
 
 DEEPSEEK_BASE = os.getenv("PROXY_UPSTREAM", "https://api.deepseek.com/anthropic")
+DEEPSEEK_CHAT_BASE = os.getenv("PROXY_UPSTREAM_CHAT", "https://api.deepseek.com/v1")
 HOST = os.getenv("PROXY_HOST", "127.0.0.1")
 try:
     PORT = int(os.getenv("PROXY_PORT", "16889"))
@@ -912,7 +913,7 @@ def _chat_to_responses_sse(line: str, state: dict) -> str | None:
 
 async def proxy_responses(request):
     """处理 Codex CLI /v1/responses: 转 Responses → Chat，SSE 回转为 Responses 格式。"""
-    upstream_url = f"{DEEPSEEK_BASE}/v1/chat/completions"
+    upstream_url = f"{DEEPSEEK_CHAT_BASE}/chat/completions"
     headers = {k: v for k, v in request.headers.items() if k.lower() not in ("host",)}
     headers["content-type"] = "application/json"
 
@@ -949,12 +950,15 @@ async def proxy_responses(request):
     )
 
     client = _get_client()
+    body_bytes = json.dumps(chat_req, ensure_ascii=False).encode("utf-8")
+    # 不传原始 content-length，httpx 会根据实际 body 自动计算
+    out_headers = {k: v for k, v in headers.items() if k.lower() not in ("content-length", "transfer-encoding")}
     try:
         req = client.build_request(
             method="POST",
             url=upstream_url,
-            headers=headers,
-            content=json.dumps(chat_req, ensure_ascii=False).encode("utf-8"),
+            headers=out_headers,
+            content=body_bytes,
         )
         upstream_resp = await client.send(req, stream=True)
     except Exception:
@@ -1014,7 +1018,7 @@ async def proxy_responses(request):
 
 async def proxy_chat(request):
     """处理 Codex CLI wire_api=chat 模式: 对 DeepSeek 做 thinking 标准化后直通。"""
-    upstream_url = f"{DEEPSEEK_BASE}/v1/chat/completions"
+    upstream_url = f"{DEEPSEEK_CHAT_BASE}/chat/completions"
     headers = {k: v for k, v in request.headers.items() if k.lower() not in ("host",)}
     headers["content-type"] = "application/json"
 
