@@ -820,7 +820,7 @@ def _chat_to_responses_sse(line: str, state: dict) -> str | None:
                             "type": "response.content_part.added",
                             "item_id": item_id,
                             "output_index": 0,
-                            "part": {"type": "output_text", "text": ""},
+                            "part": {"type": "text", "text": ""},
                         }
                     ),
                 ]
@@ -855,7 +855,7 @@ def _chat_to_responses_sse(line: str, state: dict) -> str | None:
                         "type": "response.content_part.added",
                         "item_id": item_id,
                         "output_index": 0,
-                        "part": {"type": "output_text", "text": ""},
+                        "part": {"type": "text", "text": ""},
                     }
                 ),
                 json.dumps({"type": "response.output_text.done", "item_id": item_id, "output_index": 0, "text": ""}),
@@ -864,7 +864,7 @@ def _chat_to_responses_sse(line: str, state: dict) -> str | None:
                         "type": "response.content_part.done",
                         "item_id": item_id,
                         "output_index": 0,
-                        "part": {"type": "output_text", "text": ""},
+                        "part": {"type": "text", "text": ""},
                     }
                 ),
                 json.dumps(
@@ -884,7 +884,7 @@ def _chat_to_responses_sse(line: str, state: dict) -> str | None:
                         "type": "response.content_part.done",
                         "item_id": item_id,
                         "output_index": 0,
-                        "part": {"type": "output_text", "text": ""},
+                        "part": {"type": "text", "text": ""},
                     }
                 ),
                 json.dumps(
@@ -1081,18 +1081,16 @@ async def proxy_responses(request):
                     # 首次 chunk：emit response.created + response.in_progress
                     if not started:
                         started = True
-                        yield _emit(
-                            {
-                                "type": "response.created",
-                                "response": {
-                                    "id": resp_id,
-                                    "object": "response",
-                                    "status": "in_progress",
-                                    "model": model,
-                                },
-                            }
-                        )
-                        yield _emit({"type": "response.in_progress", "response": {"id": resp_id}})
+                        base_resp = {
+                            "id": resp_id,
+                            "object": "response",
+                            "status": "in_progress",
+                            "model": model,
+                            "output": [],
+                            "usage": None,
+                        }
+                        yield _emit({"type": "response.created", "response": base_resp})
+                        yield _emit({"type": "response.in_progress", "response": base_resp})
 
                     # 处理 reasoning_content
                     if delta.get("reasoning_content"):
@@ -1192,7 +1190,7 @@ async def proxy_responses(request):
                                     "item_id": msg_id,
                                     "output_index": 0,
                                     "content_index": 0,
-                                    "part": {"type": "output_text", "text": ""},
+                                    "part": {"type": "text", "text": ""},
                                 }
                             )
                         current_text += ct
@@ -1243,7 +1241,7 @@ async def proxy_responses(request):
                                     "type": "response.content_part.done",
                                     "item_id": msg_id,
                                     "output_index": 0,
-                                    "part": {"type": "output_text", "text": ""},
+                                    "part": {"type": "text", "text": ""},
                                 },
                                 {
                                     "type": "response.output_item.done",
@@ -1326,7 +1324,7 @@ async def proxy_responses(request):
                             "type": "response.content_part.done",
                             "item_id": msg_id,
                             "output_index": 0,
-                            "part": {"type": "output_text", "text": ""},
+                            "part": {"type": "text", "text": ""},
                         },
                         {
                             "type": "response.output_item.done",
