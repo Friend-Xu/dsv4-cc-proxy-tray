@@ -63,9 +63,9 @@ _COLOR_TAGS = {
 }
 
 _ROUTE_COLORS = {
-    "CC": "#8B4513",     # 棕色 — Claude Code
-    "CODEX": "#2E8B57",  # 绿色 — Codex
-    "CHAT": "#2E8B57",   # 绿色 — Codex chat 模式
+    "CC": {"tag": "cc-route", "color": "#8B4513"},      # 棕色 — Claude Code
+    "CODEX": {"tag": "codex-route", "color": "#2E8B57"},  # 绿色 — Codex
+    "CHAT": {"tag": "codex-route", "color": "#2E8B57"},   # 绿色 — Codex chat
 }
 
 _LOG_LINE_RE = re.compile(r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3})\s+(\w+)\s+(.*)$")
@@ -282,8 +282,8 @@ def main():
         log_text.tag_config("ts", foreground="gray")
         for level, c in _COLOR_TAGS.items():
             log_text.tag_config(c, foreground=c)
-        for route, c in _ROUTE_COLORS.items():
-            log_text.tag_config(c, foreground=c)
+        for route, info in _ROUTE_COLORS.items():
+            log_text.tag_config(info["tag"], foreground=info["color"])
         _tags_inited = True
 
     def _flush_log():
@@ -328,7 +328,10 @@ def main():
 
     def _route_color(msg: str) -> str | None:
         m = _ROUTE_RE.search(msg)
-        return _ROUTE_COLORS.get(m.group(1)) if m else None
+        if m:
+            info = _ROUTE_COLORS.get(m.group(1))
+            return info["tag"] if info else None
+        return None
 
     def _append_text(raw: str, force_level: str = ""):
         color = "black"
