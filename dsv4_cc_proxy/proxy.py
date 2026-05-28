@@ -156,7 +156,7 @@ def _inject_thinking_blocks(data: dict) -> bool:
                     content.insert(i, {"type": "thinking", "thinking": thinking_text})
                     modified = True
                     if stored:
-                        logger.info("[REASONING] injected stored reasoning key=%s", key)
+                        logger.info("[CC-REASONING] injected stored reasoning key=%s", key)
                     break
     return modified
 
@@ -180,7 +180,7 @@ def _normalize_thinking(data: dict) -> bool:
     for key in ("reasoning_effort", "output_config"):
         val = data.pop(key, None)
         if val is not None:
-            logger.info("[THINKING] removed %s=%s", key, val)
+            logger.info("[CC-THINKING] removed %s=%s", key, val)
 
     stripped = 0
     for msg in data.get("messages", []):
@@ -197,7 +197,7 @@ def _normalize_thinking(data: dict) -> bool:
             msg["content"] = new_content
 
     logger.info(
-        "[THINKING] converted %s → disabled, stripped %d thinking blocks",
+        "[CC-THINKING] converted %s → disabled, stripped %d thinking blocks",
         thinking_type,
         stripped,
     )
@@ -268,7 +268,7 @@ def _dump_json(filename: str, data):
         s = s[:DUMP_MAX_BYTES] + "\n\n... [TRUNCATED at {}KB]".format(DUMP_MAX_BYTES // 1000)
     with open(path, "w") as f:
         f.write(s)
-    logger.info("[DUMP] %s (%d bytes)", filename, len(s))
+    logger.info("[CC-DUMP] %s (%d bytes)", filename, len(s))
 
 
 def _summarize_request(data: dict) -> dict:
@@ -315,7 +315,7 @@ async def proxy(request):
     if is_messages:
         try:
             data = json.loads(body)
-            logger.info("[REQ] %s", json.dumps(_summarize_request(data), ensure_ascii=False))
+            logger.info("[CC-REQ] %s", json.dumps(_summarize_request(data), ensure_ascii=False))
             _dump_json("last_request.json", data)
 
             original_thinking_enabled = _thinking_requested(data)
@@ -323,13 +323,13 @@ async def proxy(request):
             thinking_normalized = _normalize_thinking(data)
 
             if _inject_thinking_blocks(data):
-                logger.info("[INJECT] added empty thinking block")
+                logger.info("[CC-INJECT] added empty thinking block")
                 thinking_normalized = True
 
             if original_thinking_enabled:
                 strip_thinking = False
             else:
-                logger.info("[STRIP] response filter enabled")
+                logger.info("[CC-STRIP] response filter enabled")
 
             if thinking_normalized:
                 modified_body = json.dumps(data, ensure_ascii=False).encode("utf-8")
@@ -358,7 +358,7 @@ async def proxy(request):
 
     content_type = upstream_resp.headers.get("content-type", "")
     is_sse = "text/event-stream" in content_type
-    logger.info("[RESP] status=%s sse=%s", upstream_resp.status_code, is_sse)
+    logger.info("[CC-RESP] status=%s sse=%s", upstream_resp.status_code, is_sse)
 
     if not strip_thinking or not is_sse:
 
@@ -377,7 +377,7 @@ async def proxy(request):
             headers=_build_response_headers(upstream_resp, is_sse),
         )
 
-    logger.info("[FILTER] stripping thinking from SSE stream")
+    logger.info("[CC-FILTER] stripping thinking from SSE stream")
 
     async def filtered_stream():
         thinking_indices = set()
@@ -433,9 +433,9 @@ async def proxy(request):
                     if len(_reasoning_store) >= _REASONING_STORE_LIMIT:
                         _reasoning_store.pop(next(iter(_reasoning_store)), None)
                     _reasoning_store[key] = combined
-                    logger.info("[REASONING] stored key=%s chars=%d", key, len(combined))
-            logger.info("[RESP-EVENTS] raw=%s", event_types[:LOG_EVENT_PREVIEW])
-            logger.info("[RESP-FILTERED] lines=%d", len(all_filtered))
+                    logger.info("[CC-REASONING] stored key=%s chars=%d", key, len(combined))
+            logger.info("[CC-RESP-EVENTS] raw=%s", event_types[:LOG_EVENT_PREVIEW])
+            logger.info("[CC-RESP-FILTERED] lines=%d", len(all_filtered))
             _dump_json(
                 "last_response_events.json",
                 {

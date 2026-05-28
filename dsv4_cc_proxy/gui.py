@@ -62,7 +62,15 @@ _COLOR_TAGS = {
     "DEBUG": "gray",
 }
 
+_ROUTE_COLORS = {
+    "CC": "#8B4513",     # 棕色 — Claude Code
+    "CODEX": "#2E8B57",  # 绿色 — Codex
+    "CHAT": "#2E8B57",   # 绿色 — Codex chat 模式
+}
+
 _LOG_LINE_RE = re.compile(r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3})\s+(\w+)\s+(.*)$")
+
+_ROUTE_RE = re.compile(r"\[(CC|CODEX|CHAT)-")
 
 
 # ── 跨平台进程检查 ──────────────────────────────────────────
@@ -316,6 +324,10 @@ def main():
         _flush_log()
         root.after(500, _poll_log)
 
+    def _route_color(msg: str) -> str | None:
+        m = _ROUTE_RE.search(msg)
+        return _ROUTE_COLORS.get(m.group(1)) if m else None
+
     def _append_text(raw: str, force_level: str = ""):
         color = "black"
         ts = ""
@@ -332,6 +344,10 @@ def main():
                 msg = m.group(3)
             else:
                 ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S,%f")[:-3] + " "
+
+        rc = _route_color(msg)
+        if rc:
+            color = rc
 
         _log_buffer.append((ts, msg, color))
 
