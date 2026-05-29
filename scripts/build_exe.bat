@@ -16,7 +16,7 @@ echo [2/4] 安装依赖（确保 httpx 等被打包）...
 pip install httpx starlette uvicorn anyio httpcore h11 certifi idna
 
 echo [3/4] 打包中...
-pyinstaller --onefile --windowed --name dsv4-cc-proxy-tray --clean --add-data "dsv4_cc_proxy;dsv4_cc_proxy" --hidden-import tkinter --hidden-import httpx --hidden-import starlette --hidden-import uvicorn --hidden-import anyio --hidden-import httpcore --hidden-import h11 --hidden-import certifi --collect-all httpx --collect-all httpcore dsv4_cc_proxy/gui.py
+pyinstaller --onefile --windowed --name dsv4-cc-proxy-tray --icon Logo.ico --clean --add-data "dsv4_cc_proxy;dsv4_cc_proxy" --hidden-import tkinter --hidden-import httpx --hidden-import starlette --hidden-import uvicorn --hidden-import anyio --hidden-import httpcore --hidden-import h11 --hidden-import certifi --collect-all httpx --collect-all httpcore dsv4_cc_proxy/gui.py
 
 echo.
 echo [4/4] 完成！
