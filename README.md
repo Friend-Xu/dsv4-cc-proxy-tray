@@ -190,6 +190,10 @@ curl http://localhost:16889/health
 # → {"status":"ok","version":"1.8.0","upstream":"https://api.deepseek.com/anthropic"}
 ```
 
+## Acknowledgements
+
+Codex CLI Responses/Chat protocol translation based on [Nigel211/codex_deepseek_proxy](https://github.com/Nigel211/codex_deepseek_proxy).
+
 ## License
 
 [MIT](LICENSE)

@@ -161,7 +161,41 @@ def _inject_thinking_blocks(data: dict) -> bool:
                     break
     return modified
 
+# ==================== 新增：提取 system 消息的函数 ====================
+def _extract_system_messages(data: dict) -> dict:
+    """
+    将 Claude Code 新版请求中的 system 消息提回顶层 (修复 role: system 错误)
+    """
+    messages = data.get("messages", [])
+    if not isinstance(messages, list):
+        return data
 
+    system_content = []
+    new_messages = []
+    for msg in messages:
+        if msg.get("role") == "system":
+            # 提取 system 内容
+            content = msg.get("content", "")
+            if content:
+                system_content.append(content)
+        else:
+            # 保留 user / assistant 消息
+            new_messages.append(msg)
+
+    # 合并顶层的 system 字段（如果有）
+    old_system = data.get("system", "")
+    if system_content:
+        combined_system = "\n".join(system_content)
+        if old_system:
+            combined_system = old_system + "\n" + combined_system
+        data["system"] = combined_system
+    elif old_system:
+        data["system"] = old_system
+    else:
+        data.pop("system", None)
+
+    data["messages"] = new_messages
+    return data
 # ---- 修复 2: thinking 模式标准化 ----
 
 
@@ -327,10 +361,14 @@ async def proxy(request):
                 logger.info("[CC-INJECT] added empty thinking block")
                 thinking_normalized = True
 
+
+
             if original_thinking_enabled:
                 strip_thinking = False
             else:
                 logger.info("[CC-STRIP] response filter enabled")
+
+            data = _extract_system_messages(data)
 
             if thinking_normalized:
                 modified_body = json.dumps(data, ensure_ascii=False).encode("utf-8")
@@ -458,55 +496,121 @@ async def proxy(request):
 
 
 def _responses_to_chat(data: dict, strip_thinking: bool) -> dict:
-    """将 OpenAI Responses API 请求转为 DeepSeek Chat Completions 请求。"""
+    """将 OpenAI Responses API 请求转为 DeepSeek Chat Completions 请求。
+
+    基于 Nigel211/codex_deepseek_proxy 的 extract_messages 重写，
+    关键要点:
+    - function_call 只累积不 flush (避免不完整配对)
+    - message 处理前先 flush 累积的 function_calls
+    - message.content 中也要提取 tool_call 类型块
+    - 末尾重排: system/developer 消息移到 assistant(tool_calls) 之前
+    """
+    ROLE_MAP = {"developer": "system"}
     messages: list[dict] = []
 
-    # Instructions → system message
     instructions = data.get("instructions", "")
     if isinstance(instructions, str) and instructions.strip():
         messages.append({"role": "system", "content": instructions})
 
-    # Walk input items
-    pending_reasoning: str | None = None
+    pending_reasoning: str = ""
     pending_tool_calls: list[dict] = []
 
     def _flush_tool_calls():
         nonlocal pending_reasoning
         if pending_tool_calls:
-            assistant_msg: dict = {
+            msg: dict = {
                 "role": "assistant",
-                "content": None,
+                "content": "",
                 "tool_calls": pending_tool_calls[:],
             }
             if pending_reasoning:
-                assistant_msg["reasoning_content"] = pending_reasoning
-                pending_reasoning = None
-            messages.append(assistant_msg)
+                msg["reasoning_content"] = pending_reasoning
+                pending_reasoning = ""
+            messages.append(msg)
             pending_tool_calls.clear()
 
     for item in data.get("input", []):
+        if not isinstance(item, dict):
+            continue
         item_type = item.get("type", "")
 
+        # --- message ---
         if item_type == "message":
+            _flush_tool_calls()  # 先把前面累积的 function_calls 提交
             role = item.get("role", "user")
-            content_blocks = item.get("content", [])
-            if isinstance(content_blocks, str):
-                text = content_blocks
-            else:
-                text = "\n".join(
-                    b.get("text", "")
-                    for b in content_blocks
+            role = ROLE_MAP.get(role, role)
+            content = item.get("content", "")
+
+            if isinstance(content, list):
+                texts: list[str] = []
+                tool_calls_from_content: list[dict] = []
+                for c in content:
+                    if not isinstance(c, dict):
+                        continue
+                    c_type = c.get("type", "")
+                    if c_type in ("text", "input_text", "output_text"):
+                        t = c.get("text", "") or ""
+                        if t.strip():
+                            texts.append(t)
+                    elif c_type == "tool_call":
+                        tool_calls_from_content.append({
+                            "id": c.get("id", ""),
+                            "type": "function",
+                            "function": {
+                                "name": c.get("name", ""),
+                                "arguments": c.get("arguments", ""),
+                            },
+                        })
+                text = "\n".join(texts)
+                if tool_calls_from_content:
+                    msg: dict = {"role": role, "content": text or ""}
+                    msg["tool_calls"] = tool_calls_from_content
+                    if item.get("reasoning_content"):
+                        msg["reasoning_content"] = item["reasoning_content"]
+                    messages.append(msg)
+                elif text:
+                    msg = {"role": role, "content": text}
+                    if item.get("reasoning_content"):
+                        msg["reasoning_content"] = item["reasoning_content"]
+                    messages.append(msg)
+                # 如果 content 列表没有文本也没有 tool_calls，跳过
+            elif isinstance(content, str):
+                text = content.strip()
+                if text:
+                    msg = {"role": role, "content": text}
+                    if item.get("reasoning_content"):
+                        msg["reasoning_content"] = item["reasoning_content"]
+                    messages.append(msg)
+
+        # --- function_call ---
+        elif item_type == "function_call":
+            pending_tool_calls.append({
+                "id": item.get("call_id", ""),
+                "type": "function",
+                "function": {
+                    "name": item.get("name", ""),
+                    "arguments": item.get("arguments", ""),
+                },
+            })
+            if item.get("reasoning_content") and not pending_reasoning:
+                pending_reasoning = item["reasoning_content"]
+
+        # --- function_call_output ---
+        elif item_type == "function_call_output":
+            _flush_tool_calls()
+            output = item.get("output", "")
+            if isinstance(output, list):
+                output = "\n".join(
+                    b.get("text", "") for b in output
                     if isinstance(b, dict) and b.get("type") in ("input_text", "text")
                 )
-            chat_role = {"user": "user", "system": "system", "developer": "system", "assistant": "assistant"}.get(
-                role, "user"
-            )
-            if chat_role == "assistant" and pending_reasoning:
-                messages.append({"role": "assistant", "content": text, "reasoning_content": pending_reasoning})
-                pending_reasoning = None
-            else:
-                messages.append({"role": chat_role, "content": text})
+            messages.append({
+                "role": "tool",
+                "tool_call_id": item.get("call_id", ""),
+                "content": output,
+            })
 
+        # --- reasoning ---
         elif item_type == "reasoning":
             summary = item.get("summary", [])
             if isinstance(summary, list):
@@ -518,48 +622,49 @@ def _responses_to_chat(data: dict, strip_thinking: bool) -> dict:
             else:
                 pending_reasoning = item.get("content", "")
 
-        elif item_type == "function_call":
-            _flush_tool_calls()
-            pending_tool_calls.append(
-                {
-                    "id": item.get("call_id", ""),
-                    "type": "function",
-                    "function": {
-                        "name": item.get("name", ""),
-                        "arguments": item.get("arguments", ""),
-                    },
-                }
-            )
-
-        elif item_type == "function_call_output":
-            _flush_tool_calls()
-            output = item.get("output", "")
-            if isinstance(output, list):
-                output = "\n".join(
-                    b.get("text", "") for b in output if isinstance(b, dict) and b.get("type") in ("input_text", "text")
-                )
-            messages.append(
-                {
-                    "role": "tool",
-                    "tool_call_id": item.get("call_id", ""),
-                    "content": output,
-                }
-            )
-
+        # --- custom_tool_call ---
         elif item_type == "custom_tool_call":
-            _flush_tool_calls()
-            pending_tool_calls.append(
-                {
-                    "id": item.get("call_id", ""),
-                    "type": "function",
-                    "function": {
-                        "name": item.get("name", ""),
-                        "arguments": item.get("input", ""),
-                    },
-                }
-            )
+            pending_tool_calls.append({
+                "id": item.get("call_id", ""),
+                "type": "function",
+                "function": {
+                    "name": item.get("name", ""),
+                    "arguments": item.get("input", ""),
+                },
+            })
 
     _flush_tool_calls()
+
+    # ---- 重排消息：确保 tool 消息紧跟对应的 assistant 消息 ----
+    # DeepSeek 要求：带 tool_calls 的 assistant 消息后必须紧跟所有对应的 tool 消息。
+    # Codex 有时会在中间注入 system/developer 消息，把它们移到 assistant 之前。
+    reordered: list[dict] = []
+    i = 0
+    while i < len(messages):
+        msg = messages[i]
+        if msg.get("role") == "assistant" and msg.get("tool_calls"):
+            expected_ids = {tc["id"] for tc in msg["tool_calls"]}
+            tool_msgs: list[dict] = []
+            pre_msgs: list[dict] = []
+            j = i + 1
+            while j < len(messages) and expected_ids:
+                nxt = messages[j]
+                if nxt.get("role") == "tool" and nxt.get("tool_call_id") in expected_ids:
+                    expected_ids.remove(nxt["tool_call_id"])
+                    tool_msgs.append(nxt)
+                elif nxt.get("role") in ("system", "developer"):
+                    pre_msgs.append(nxt)
+                else:
+                    break
+                j += 1
+            reordered.extend(pre_msgs)
+            reordered.append(msg)
+            reordered.extend(tool_msgs)
+            i = j
+        else:
+            reordered.append(msg)
+            i += 1
+    messages = reordered
 
     # reasoning.effort → reasoning_effort
     reasoning_cfg = data.get("reasoning", {})
@@ -1022,44 +1127,38 @@ async def proxy_responses(request):
     import uuid
 
     async def _stream_convert():
-        """逐 chunk 流式转换：Chat SSE → Responses SSE（参考 ai-adapter 的 ChatStreamToResponsesTranslator）。"""
-        resp_id = f"resp_{uuid.uuid4().hex[:24]}"
-        msg_id = f"msg_{resp_id[-8:]}"
+        """Chat SSE → Responses SSE，按 Nigel211/codex_deepseek_proxy 的已验证格式。"""
+        resp_id = f"resp_{uuid.uuid4().hex[:12]}"
+        text_item_id = f"item_{uuid.uuid4().hex[:12]}"
 
-        seq = 0
         started = False
-        msg_item_added = False
-        content_part_added = False
         finished = False
-        current_text = ""
-        current_reasoning = ""
-        tool_calls: dict[int, dict] = {}  # index → {id, name, args}
+        full_text = ""
+        full_reasoning = ""
+        has_text = False
+        text_started = False
+        tool_calls: dict[int, dict] = {}  # index → {id, name, arguments, item_id, started}
+        seq = 0
         buffer = ""
-
-        def _next_seq() -> int:
-            nonlocal seq
-            s = seq
-            seq += 1
-            return s
 
         _dump_path = Path.home() / ".dsv4-cc-proxy-sse-dump.txt"
 
-        def _dump(data: bytes) -> bytes:
+        def _emit(event: dict) -> bytes:
+            nonlocal seq
+            ev_type = event.get("type", "")
+            # Nigel211 只在 text delta 上加 sequence_number
+            if ev_type == "response.output_text.delta" and "sequence_number" not in event:
+                seq += 1
+                event["sequence_number"] = seq
+            payload = json.dumps(event, ensure_ascii=False)
+            data = f"event: {ev_type}\ndata: {payload}\n\n".encode() if ev_type else f"data: {payload}\n\n".encode()
             with open(_dump_path, "ab") as f:
                 f.write(data)
             return data
 
-        def _emit(event: dict) -> bytes:
-            event["sequence_number"] = _next_seq()
-            ev_type = event.get("type", "")
-            payload = json.dumps(event, ensure_ascii=False)
-            if ev_type:
-                return _dump(f"event: {ev_type}\ndata: {payload}\n\n".encode())
-            return _dump(f"data: {payload}\n\n".encode())
-
         try:
-            async for data in upstream_resp.aiter_bytes():
-                text = data.decode("utf-8", errors="replace")
+            async for chunk_data in upstream_resp.aiter_bytes():
+                text = chunk_data.decode("utf-8", errors="replace")
                 buffer += text
                 while "\n" in buffer:
                     line, buffer = buffer.split("\n", 1)
@@ -1071,282 +1170,167 @@ async def proxy_responses(request):
                     except json.JSONDecodeError:
                         continue
 
+                    if "error" in chunk:
+                        err = chunk["error"]
+                        message = err.get("message", str(err))
+                        logger.error("[CODEX-SSE] upstream error: %s", message)
+                        yield _emit({
+                            "type": "response.failed",
+                            "response": {"id": resp_id, "object": "response", "status": "failed",
+                                         "model": chat_req.get("model", ""), "error": {"message": message, "type": "upstream_error"},
+                                         "output": [], "usage": None},
+                        })
+                        finished = True
+                        return
+
                     choices = chunk.get("choices")
                     if not choices:
                         continue
                     choice = choices[0]
                     delta = choice.get("delta", {})
                     model = chunk.get("model", "")
+                    finish_reason = choice.get("finish_reason")
 
-                    # 首次 chunk：emit response.created + response.in_progress
+                    # ---- 首次：emit response.created + response.in_progress ----
                     if not started:
                         started = True
-                        base_resp = {
-                            "id": resp_id,
-                            "object": "response",
-                            "status": "in_progress",
-                            "model": model,
-                            "output": [],
-                            "usage": None,
-                        }
-                        yield _emit({"type": "response.created", "response": base_resp})
-                        yield _emit({"type": "response.in_progress", "response": base_resp})
+                        base = {"id": resp_id, "object": "response", "status": "in_progress",
+                                "model": model, "output": [], "usage": None}
+                        yield _emit({"type": "response.created", "response": base})
+                        yield _emit({"type": "response.in_progress", "response": base})
 
-                    # 处理 reasoning_content
-                    if delta.get("reasoning_content"):
-                        rc = delta["reasoning_content"]
-                        if not current_reasoning:
-                            rs_id = f"rs_{resp_id[-8:]}"
-                            yield _emit(
-                                {
-                                    "type": "response.output_item.added",
-                                    "output_index": 0,
-                                    "item": {"id": rs_id, "type": "reasoning", "status": "in_progress"},
-                                }
-                            )
-                            yield _emit(
-                                {
-                                    "type": "response.content_part.added",
-                                    "item_id": rs_id,
-                                    "output_index": 0,
-                                    "content_index": 0,
-                                    "part": {"type": "summary_text", "text": ""},
-                                }
-                            )
-                        current_reasoning += rc
-                        yield _emit(
-                            {
-                                "type": "response.output_text.delta",
-                                "item_id": f"rs_{resp_id[-8:]}",
-                                "output_index": 0,
-                                "content_index": 0,
-                                "delta": rc,
-                            }
-                        )
+                    # ---- reasoning_content（存储，不单独 emit reasoning item）----
+                    rc = delta.get("reasoning_content", "")
+                    if rc:
+                        full_reasoning += rc
 
-                    # 处理 tool_calls
+                    # ---- 文本内容 ----
+                    content = delta.get("content", "")
+                    if content:
+                        if not text_started:
+                            text_started = True
+                            has_text = True
+                            yield _emit({
+                                "type": "response.output_item.added", "output_index": 0,
+                                "item": {"id": text_item_id, "type": "message", "status": "in_progress",
+                                         "role": "assistant", "content": []},
+                            })
+                            yield _emit({
+                                "type": "response.content_part.added", "item_id": text_item_id,
+                                "output_index": 0, "content_index": 0,
+                                "part": {"type": "text", "text": ""},
+                            })
+                        full_text += content
+                        yield _emit({
+                            "type": "response.output_text.delta", "delta": content,
+                            "item_id": text_item_id, "output_index": 0, "content_index": 0,
+                        })
+
+                    # ---- 工具调用 ----
                     for tc in delta.get("tool_calls", []):
                         idx = tc.get("index", 0)
-                        tc_id = tc.get("id")
+                        if idx not in tool_calls:
+                            item_id = f"item_{uuid.uuid4().hex[:12]}"
+                            tool_calls[idx] = {"id": "", "name": "", "arguments": "", "item_id": item_id, "started": False}
+                        acc = tool_calls[idx]
+                        if tc.get("id"):
+                            acc["id"] = tc["id"]
                         func = tc.get("function", {})
-                        if tc_id is not None:
-                            item_id = f"fc_{resp_id[-8:]}_{idx}"
-                            tool_calls[idx] = {
-                                "id": tc_id,
-                                "name": func.get("name", ""),
-                                "args": func.get("arguments", ""),
-                                "item_id": item_id,
-                            }
-                            yield _emit(
-                                {
-                                    "type": "response.output_item.added",
-                                    "output_index": idx,
-                                    "item": {
-                                        "id": item_id,
-                                        "type": "function_call",
-                                        "call_id": tc_id,
-                                        "name": func.get("name", ""),
-                                        "arguments": "",
-                                        "status": "in_progress",
-                                    },
-                                }
-                            )
-                        else:
-                            tc = tool_calls.get(idx)
-                            if tc:
-                                args_delta = func.get("arguments", "")
-                                tc["args"] += args_delta
-                                yield _emit(
-                                    {
-                                        "type": "response.function_call_arguments.delta",
-                                        "item_id": tc["item_id"],
-                                        "output_index": idx,
-                                        "delta": args_delta,
-                                    }
-                                )
+                        if func.get("name"):
+                            acc["name"] = func["name"]
+                        args_delta = func.get("arguments", "")
+                        if args_delta:
+                            acc["arguments"] += args_delta
+                            out_idx = (1 if has_text else 0) + sorted(tool_calls.keys()).index(idx)
+                            if not acc["started"]:
+                                acc["started"] = True
+                                yield _emit({
+                                    "type": "response.output_item.added", "output_index": out_idx,
+                                    "item": {"id": acc["item_id"], "type": "function_call",
+                                             "status": "in_progress", "call_id": acc["id"],
+                                             "name": acc["name"], "arguments": ""},
+                                })
+                            yield _emit({
+                                "type": "response.function_call_arguments.delta",
+                                "item_id": acc["item_id"], "output_index": out_idx,
+                                "delta": args_delta,
+                            })
 
-                    # 处理 text content
-                    if delta.get("content"):
-                        ct = delta["content"]
-                        if not msg_item_added:
-                            msg_item_added = True
-                            yield _emit(
-                                {
-                                    "type": "response.output_item.added",
-                                    "output_index": 0,
-                                    "item": {
-                                        "id": msg_id,
-                                        "type": "message",
-                                        "role": "assistant",
-                                        "status": "in_progress",
-                                        "content": [],
-                                    },
-                                }
-                            )
-                        if not content_part_added:
-                            content_part_added = True
-                            yield _emit(
-                                {
-                                    "type": "response.content_part.added",
-                                    "item_id": msg_id,
-                                    "output_index": 0,
-                                    "content_index": 0,
-                                    "part": {"type": "text", "text": ""},
-                                }
-                            )
-                        current_text += ct
-                        yield _emit(
-                            {
-                                "type": "response.output_text.delta",
-                                "item_id": msg_id,
-                                "output_index": 0,
-                                "content_index": 0,
-                                "delta": ct,
-                            }
-                        )
-
-                    # 处理 finish_reason
-                    fr = choice.get("finish_reason")
-                    if fr in ("stop", "tool_calls", "length"):
+                    # ---- 完成事件 ----
+                    if finish_reason in ("stop", "tool_calls", "length"):
                         finished = True
+                        status = "completed" if finish_reason != "length" else "incomplete"
 
-                        # reasoning done
-                        if current_reasoning:
-                            rs_id = f"rs_{resp_id[-8:]}"
-                            for ev in [
-                                {
-                                    "type": "response.output_text.done",
-                                    "item_id": rs_id,
-                                    "output_index": 0,
-                                    "text": current_reasoning,
-                                },
-                                {
-                                    "type": "response.content_part.done",
-                                    "item_id": rs_id,
-                                    "output_index": 0,
-                                    "part": {"type": "summary_text", "text": current_reasoning},
-                                },
-                                {
-                                    "type": "response.output_item.done",
-                                    "item": {"id": rs_id, "type": "reasoning", "status": "completed"},
-                                    "output_index": 0,
-                                },
-                            ]:
-                                yield _emit(ev)
+                        # 文本完成
+                        if has_text:
+                            yield _emit({"type": "response.output_text.done", "text": full_text,
+                                         "item_id": text_item_id, "output_index": 0, "content_index": 0})
+                            yield _emit({"type": "response.content_part.done", "item_id": text_item_id,
+                                         "output_index": 0, "content_index": 0,
+                                         "part": {"type": "text", "text": full_text}})
+                            text_item = {"id": text_item_id, "type": "message", "status": "completed",
+                                         "role": "assistant", "content": [{"type": "text", "text": full_text}]}
+                            if full_reasoning:
+                                text_item["reasoning_content"] = full_reasoning
+                            yield _emit({"type": "response.output_item.done", "output_index": 0, "item": text_item})
 
-                        # text message done
-                        if msg_item_added:
-                            for ev in [
-                                {"type": "response.output_text.done", "item_id": msg_id, "output_index": 0, "text": ""},
-                                {
-                                    "type": "response.content_part.done",
-                                    "item_id": msg_id,
-                                    "output_index": 0,
-                                    "part": {"type": "text", "text": ""},
-                                },
-                                {
-                                    "type": "response.output_item.done",
-                                    "item": {
-                                        "id": msg_id,
-                                        "type": "message",
-                                        "role": "assistant",
-                                        "status": "completed",
-                                    },
-                                    "output_index": 0,
-                                },
-                            ]:
-                                yield _emit(ev)
+                        # 工具调用完成
+                        output_items = []
+                        if has_text:
+                            ti = {"id": text_item_id, "type": "message", "status": "completed",
+                                  "role": "assistant", "content": [{"type": "text", "text": full_text}]}
+                            if full_reasoning:
+                                ti["reasoning_content"] = full_reasoning
+                            output_items.append(ti)
 
-                        # tool calls done
-                        for tc in tool_calls.values():
-                            for ev in [
-                                {
-                                    "type": "response.function_call_arguments.done",
-                                    "item_id": tc["item_id"],
-                                    "output_index": 0,
-                                    "arguments": tc["args"],
-                                },
-                                {
-                                    "type": "response.output_item.done",
-                                    "item": {
-                                        "id": tc["item_id"],
-                                        "type": "function_call",
-                                        "call_id": tc["id"],
-                                        "name": tc["name"],
-                                        "arguments": tc["args"],
-                                        "status": "completed",
-                                    },
-                                    "output_index": 0,
-                                },
-                            ]:
-                                yield _emit(ev)
+                        for idx in sorted(tool_calls.keys()):
+                            acc = tool_calls[idx]
+                            out_idx = (1 if has_text else 0) + sorted(tool_calls.keys()).index(idx)
+                            yield _emit({"type": "response.function_call_arguments.done",
+                                         "item_id": acc["item_id"], "output_index": out_idx,
+                                         "arguments": acc["arguments"]})
+                            func_item = {"id": acc["item_id"], "type": "function_call",
+                                         "status": "completed", "call_id": acc["id"],
+                                         "name": acc["name"], "arguments": acc["arguments"]}
+                            if full_reasoning:
+                                func_item["reasoning_content"] = full_reasoning
+                            yield _emit({"type": "response.output_item.done", "output_index": out_idx, "item": func_item})
+                            output_items.append({"id": acc["item_id"], "type": "function_call",
+                                                "status": "completed", "call_id": acc["id"],
+                                                "name": acc["name"], "arguments": acc["arguments"]})
 
-                        status = "completed" if fr != "length" else "incomplete"
-                        yield _emit(
-                            {
-                                "type": "response.completed",
-                                "response": {"id": resp_id, "object": "response", "status": status, "model": model},
-                            }
-                        )
+                        # response.completed
+                        yield _emit({"type": "response.completed",
+                                     "response": {"id": resp_id, "object": "response", "status": status,
+                                                  "model": model, "output": output_items, "usage": None}})
 
-                        logger.info(
-                            "[CODEX-SSE] finished — text=%d chars, tools=%d", len(current_text), len(tool_calls)
-                        )
-                        yield _dump(b"data: [DONE]\n\n")
+                        logger.info("[CODEX-SSE] finished — text=%d chars, tools=%d", len(full_text), len(tool_calls))
+                        yield f"data: [DONE]\n\n".encode()
 
-            # 流结束时补发 response.completed（上游没发 finish_reason 的情况）
+            # 流结束但无 finish_reason — 补发完成
             if not finished and started:
-                if current_reasoning:
-                    rs_id = f"rs_{resp_id[-8:]}"
-                    for ev in [
-                        {
-                            "type": "response.output_text.done",
-                            "item_id": rs_id,
-                            "output_index": 0,
-                            "text": current_reasoning,
-                        },
-                        {
-                            "type": "response.content_part.done",
-                            "item_id": rs_id,
-                            "output_index": 0,
-                            "part": {"type": "summary_text", "text": current_reasoning},
-                        },
-                        {
-                            "type": "response.output_item.done",
-                            "item": {"id": rs_id, "type": "reasoning", "status": "completed"},
-                            "output_index": 0,
-                        },
-                    ]:
-                        yield _emit(ev)
-                if msg_item_added:
-                    for ev in [
-                        {"type": "response.output_text.done", "item_id": msg_id, "output_index": 0, "text": ""},
-                        {
-                            "type": "response.content_part.done",
-                            "item_id": msg_id,
-                            "output_index": 0,
-                            "part": {"type": "text", "text": ""},
-                        },
-                        {
-                            "type": "response.output_item.done",
-                            "item": {"id": msg_id, "type": "message", "role": "assistant", "status": "completed"},
-                            "output_index": 0,
-                        },
-                    ]:
-                        yield _emit(ev)
-                yield _emit(
-                    {
-                        "type": "response.completed",
-                        "response": {
-                            "id": resp_id,
-                            "object": "response",
-                            "status": "completed",
-                            "model": chat_req.get("model", ""),
-                        },
-                    }
-                )
+                if has_text:
+                    yield _emit({"type": "response.output_text.done", "text": full_text,
+                                 "item_id": text_item_id, "output_index": 0, "content_index": 0})
+                    yield _emit({"type": "response.content_part.done", "item_id": text_item_id,
+                                 "output_index": 0, "content_index": 0,
+                                 "part": {"type": "text", "text": full_text}})
+                    text_item = {"id": text_item_id, "type": "message", "status": "completed",
+                                 "role": "assistant", "content": [{"type": "text", "text": full_text}]}
+                    yield _emit({"type": "response.output_item.done", "output_index": 0, "item": text_item})
+                for idx in sorted(tool_calls.keys()):
+                    acc = tool_calls[idx]
+                    out_idx = (1 if has_text else 0) + sorted(tool_calls.keys()).index(idx)
+                    yield _emit({"type": "response.function_call_arguments.done",
+                                 "item_id": acc["item_id"], "output_index": out_idx, "arguments": acc["arguments"]})
+                    yield _emit({"type": "response.output_item.done", "output_index": out_idx,
+                                 "item": {"id": acc["item_id"], "type": "function_call", "status": "completed",
+                                          "call_id": acc["id"], "name": acc["name"], "arguments": acc["arguments"]}})
+                yield _emit({"type": "response.completed",
+                             "response": {"id": resp_id, "object": "response", "status": "completed",
+                                          "model": chat_req.get("model", ""), "output": [], "usage": None}})
                 logger.info("[CODEX-SSE] stream-ended without finish_reason — forced complete")
-                yield _dump(b"data: [DONE]\n\n")
+                yield f"data: [DONE]\n\n".encode()
 
         except Exception:
             logger.exception("Codex SSE stream error")
@@ -1395,6 +1379,47 @@ async def proxy_chat(request):
     logger.info("[CHAT-REQ] %s stream=%s", model, data.get("stream", True))
 
     modified = False
+
+    # ---- 修复 Chat Completions messages（Nigel211 风格）----
+    # DeepSeek 要求: assistant(tool_calls) 后紧跟所有对应 tool 消息，
+    # content 不能为 null，system 消息不能插在 assistant 和 tool 之间。
+    msgs = data.get("messages", [])
+    if msgs:
+        # 1. 修复 content: null → ""
+        for m in msgs:
+            if isinstance(m, dict) and m.get("role") == "assistant" and m.get("tool_calls"):
+                if m.get("content") is None:
+                    m["content"] = ""
+        # 2. 重排：system 消息移到 assistant(tool_calls) 前，确保 tool 紧跟
+        reordered: list[dict] = []
+        i = 0
+        while i < len(msgs):
+            m = msgs[i]
+            if isinstance(m, dict) and m.get("role") == "assistant" and m.get("tool_calls"):
+                expected_ids = {tc["id"] for tc in m["tool_calls"] if isinstance(tc, dict) and "id" in tc}
+                tool_msgs: list[dict] = []
+                pre_msgs: list[dict] = []
+                j = i + 1
+                while j < len(msgs) and expected_ids:
+                    nxt = msgs[j]
+                    if isinstance(nxt, dict) and nxt.get("role") == "tool" and nxt.get("tool_call_id") in expected_ids:
+                        expected_ids.remove(nxt["tool_call_id"])
+                        tool_msgs.append(nxt)
+                    elif isinstance(nxt, dict) and nxt.get("role") in ("system", "developer"):
+                        pre_msgs.append(nxt)
+                    else:
+                        break
+                    j += 1
+                reordered.extend(pre_msgs)
+                reordered.append(m)
+                reordered.extend(tool_msgs)
+                i = j
+            else:
+                reordered.append(m)
+                i += 1
+        data["messages"] = reordered
+        modified = True
+
     thinking_cfg = data.get("thinking", {})
 
     if isinstance(thinking_cfg, dict) and thinking_cfg.get("type") == "adaptive":
