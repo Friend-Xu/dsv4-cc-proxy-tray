@@ -1176,9 +1176,12 @@ async def proxy_responses(request):
                         logger.error("[CODEX-SSE] upstream error: %s", message)
                         yield _emit({
                             "type": "response.failed",
-                            "response": {"id": resp_id, "object": "response", "status": "failed",
-                                         "model": chat_req.get("model", ""), "error": {"message": message, "type": "upstream_error"},
-                                         "output": [], "usage": None},
+                            "response": {
+                                "id": resp_id, "object": "response", "status": "failed",
+                                "model": chat_req.get("model", ""),
+                                "error": {"message": message, "type": "upstream_error"},
+                                "output": [], "usage": None,
+                            },
                         })
                         finished = True
                         return
@@ -1231,7 +1234,10 @@ async def proxy_responses(request):
                         idx = tc.get("index", 0)
                         if idx not in tool_calls:
                             item_id = f"item_{uuid.uuid4().hex[:12]}"
-                            tool_calls[idx] = {"id": "", "name": "", "arguments": "", "item_id": item_id, "started": False}
+                            tool_calls[idx] = {
+                                "id": "", "name": "", "arguments": "",
+                                "item_id": item_id, "started": False,
+                            }
                         acc = tool_calls[idx]
                         if tc.get("id"):
                             acc["id"] = tc["id"]
@@ -1294,7 +1300,10 @@ async def proxy_responses(request):
                                          "name": acc["name"], "arguments": acc["arguments"]}
                             if full_reasoning:
                                 func_item["reasoning_content"] = full_reasoning
-                            yield _emit({"type": "response.output_item.done", "output_index": out_idx, "item": func_item})
+                            yield _emit({
+                                "type": "response.output_item.done",
+                                "output_index": out_idx, "item": func_item,
+                            })
                             output_items.append({"id": acc["item_id"], "type": "function_call",
                                                 "status": "completed", "call_id": acc["id"],
                                                 "name": acc["name"], "arguments": acc["arguments"]})
@@ -1305,7 +1314,7 @@ async def proxy_responses(request):
                                                   "model": model, "output": output_items, "usage": None}})
 
                         logger.info("[CODEX-SSE] finished — text=%d chars, tools=%d", len(full_text), len(tool_calls))
-                        yield f"data: [DONE]\n\n".encode()
+                        yield "data: [DONE]\n\n".encode()
 
             # 流结束但无 finish_reason — 补发完成
             if not finished and started:
@@ -1330,7 +1339,7 @@ async def proxy_responses(request):
                              "response": {"id": resp_id, "object": "response", "status": "completed",
                                           "model": chat_req.get("model", ""), "output": [], "usage": None}})
                 logger.info("[CODEX-SSE] stream-ended without finish_reason — forced complete")
-                yield f"data: [DONE]\n\n".encode()
+                yield "data: [DONE]\n\n".encode()
 
         except Exception:
             logger.exception("Codex SSE stream error")
